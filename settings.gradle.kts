@@ -1,1 +1,1 @@
-rootProject.name = "pswg-toolchain"
+rootProject.name = "toolchain"

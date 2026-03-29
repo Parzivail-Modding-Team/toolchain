@@ -10,7 +10,7 @@ import java.io.IOException;
  * Discovers and caches the tracked host-project metadata that the standalone toolchain consumes.
  *
  * <p>The reusable toolchain lives under `toolchain/`, while the host project lives in the parent
- * directory and owns `toolchain.toml`, `gradle.properties`, `.idea`, and source roots.
+ * directory and owns `toolchain.toml`, `.idea`, and source roots.
  */
 public final class RepositoryContext
 {

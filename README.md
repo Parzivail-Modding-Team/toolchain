@@ -1,19 +1,19 @@
-# PSWG Toolchain
+# Toolchain
 
 ## Background
 
-The `toolchain/` project is the project setup and build pipeline for PSWG.
+This repository is the standalone project setup and build pipeline for a Fabric mod workspace.
 
 Its job is to:
 
-- load the PSWG project and module graph from `../toolchain.toml`
+- load the host project's module graph from `../toolchain.toml`
 - generate IntelliJ project metadata for the modules
 - prepare the Fabric development runtime bundles and generated run configurations
 
-`toolchain.toml` is the authoritative project configuration boundary. It captures the
-project id/name, tracked Minecraft version, default development module, and the per-module roots,
-dependencies, aggregate members, artifact ids, Fabric mod ids, mixins, and datagen outputs that
-the reusable toolchain engine consumes.
+`toolchain.toml` is the authoritative project configuration boundary for the host project. It
+captures the project id/name, tracked Minecraft version, default development module, and the
+per-module roots, dependencies, aggregate members, artifact ids, Fabric mod ids, mixins, and
+datagen outputs that the reusable toolchain engine consumes.
 
 For the full schema and worked examples, see `toolchain/PROJECT_SPEC.md`.
 
@@ -31,7 +31,7 @@ The preferred TOML shape is intentionally compact:
 The supported day-to-day workflow is wrapper-first:
 
 1. the toolchain generates the root-project IntelliJ metadata and Fabric run configurations
-2. IntelliJ builds PSWG module outputs into `out/production/...`
+2. IntelliJ builds host-project module outputs into `out/production/...`
 3. the generated `Fabric Client (platform)`, `Fabric Server (platform)`, or `Fabric Datagen <module> (platform)` run
    configuration launches `net.fabricmc.devlaunchinjector.Main`
 4. `toolchain.sh` or `toolchain.bat` runs the packaged toolchain jar from `toolchain/bin/`
@@ -45,17 +45,16 @@ cd toolchain
 
 That command:
 
-- synchronizes the PSWG root IntelliJ metadata
+- synchronizes the host-project root IntelliJ metadata
 - refreshes the generated Fabric client, server, and datagen development launch bundles
 - resolves IntelliJ source attachments for Minecraft and published library jars when sources are available
 - defaults the injected development module from the authoritative build graph
 - accepts optional launch identity overrides through `--username` and `--uuid`
 
-The graph default is `pswg_entrypoint`, which pulls the modeled bundle modules into the
-generated launch closure.
+The graph default is usually the host project's entrypoint or bundle module, which pulls the
+modeled bundle modules into the generated launch closure.
 
-That aggregation is owned by the authoritative toolchain graph itself. `pswg_entrypoint`
-declares aggregate members for development-time launch and datagen workflows.
+That aggregation is owned by the authoritative toolchain graph itself.
 
 If you need a different injected module:
 
@@ -65,12 +64,13 @@ If you need a different injected module:
 
 ## Getting Started
 
-From a fresh clone:
+From a fresh clone of a consuming project:
 
-1. run `./toolchain.sh dev setup-intellij` from `toolchain/`
-2. open the tracked repository root in IntelliJ
-3. let IntelliJ reload the generated project metadata
-4. run the generated `Fabric Client (...)`, `Fabric Server (...)`, or module-scoped `Fabric Datagen ...` configuration
+1. place the built `toolchain-<version>.jar` in `toolchain/bin/`
+2. run `./toolchain.sh dev setup-intellij` from `toolchain/`
+3. open the tracked repository root in IntelliJ
+4. let IntelliJ reload the generated project metadata
+5. run the generated `Fabric Client (...)`, `Fabric Server (...)`, or module-scoped `Fabric Datagen ...` configuration
 
 The first IDE launch will populate the IntelliJ-owned module outputs under `out/production/...`.
 
@@ -78,8 +78,8 @@ The first IDE launch will populate the IntelliJ-owned module outputs under `out/
 
 Use the same setup command whenever one of these changes:
 
-- pulled changes that touched the toolchain
-- changed dependency or version properties
+- pulled changes that touched the toolchain or the host `toolchain.toml`
+- changed dependency or version configuration in `toolchain.toml`
 - changed generated IntelliJ metadata or launch-shaping behavior
 - need to switch the injected root module
 
@@ -140,17 +140,17 @@ module" failure mode.
 
 ## Version Upgrades
 
-Most routine version bumps start in the tracked repository's `gradle.properties`.
+Most routine version bumps start in the host project's `toolchain.toml`.
 
 - Minecraft:
   update `minecraft_version`, then rerun `dev setup-intellij` so the toolchain regenerates the
   transformed compile jars, IntelliJ metadata, and Fabric launch bundle for the new version.
 - Fabric Loader or Fabric API:
-  update `loader_version` and/or `fabric_version`, then rerun `dev setup-intellij` and verify one
-  real IntelliJ debug launch.
+  update `loader_version` and/or the module dependencies in `toolchain.toml`, then rerun
+  `dev setup-intellij` and verify one real IntelliJ debug launch.
 - Other Maven dependencies:
-  update the owning module declaration in `toolchain.toml` or the tracked Gradle properties,
-  then rerun `dev setup-intellij` so IntelliJ project libraries and launch inputs stay aligned.
+  update the owning module declaration in `toolchain.toml`, then rerun `dev setup-intellij` so
+  IntelliJ project libraries and launch inputs stay aligned.
 
 After any version change:
 
