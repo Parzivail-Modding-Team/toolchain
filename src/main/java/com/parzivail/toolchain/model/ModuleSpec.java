@@ -119,6 +119,11 @@ public final class ModuleSpec
 	private String _artifactId;
 
 	/**
+	 * The jar entry glob patterns excluded from packaged artifacts.
+	 */
+	private final List<String> _artifactExcludes;
+
+	/**
 	 * The optional checked-in datagen output path.
 	 */
 	private Path _datagenOutput;
@@ -148,6 +153,7 @@ public final class ModuleSpec
 		_clientDependencies = new ArrayList<>();
 		_annotationProcessorDependencies = new ArrayList<>();
 		_runtimeDependencies = new ArrayList<>();
+		_artifactExcludes = new ArrayList<>();
 	}
 
 	/**
@@ -363,6 +369,16 @@ public final class ModuleSpec
 		}
 
 		return _artifactId;
+	}
+
+	/**
+	 * Gets the jar entry glob patterns excluded from packaged artifacts.
+	 *
+	 * @return the immutable artifact exclusion patterns
+	 */
+	public List<String> artifactExcludes()
+	{
+		return List.copyOf(_artifactExcludes);
 	}
 
 	/**
@@ -627,6 +643,19 @@ public final class ModuleSpec
 	public ModuleSpec artifactId(String id)
 	{
 		_artifactId = id;
+		return this;
+	}
+
+	/**
+	 * Declares one jar entry glob excluded from packaged artifacts.
+	 *
+	 * @param pattern the jar entry glob pattern
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec artifactExclude(String pattern)
+	{
+		_artifactExcludes.add(pattern);
 		return this;
 	}
 

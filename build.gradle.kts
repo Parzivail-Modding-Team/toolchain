@@ -1,9 +1,11 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     application
     java
 }
 
-val toolchainVersion = providers.gradleProperty("toolchainVersion").orElse("local").get()
+val toolchainVersion = resolveToolchainVersion(rootDir)
 
 version = toolchainVersion
 
@@ -67,4 +69,61 @@ val toolchainJar by tasks.registering(Jar::class) {
 
 tasks.assemble {
     dependsOn(toolchainJar)
+}
+
+fun resolveToolchainVersion(rootDirectory: java.io.File): String
+{
+    return try
+    {
+        gitDescribeVersion(rootDirectory)
+    }
+    catch (_: Exception)
+    {
+        "local"
+    }
+}
+
+fun gitDescribeVersion(rootDirectory: java.io.File): String
+{
+    val describe = runGitCommand(rootDirectory, "describe", "--tags", "--dirty", "--always")
+
+    if (describe.isBlank())
+    {
+        throw IllegalStateException("Unable to resolve the toolchain version from git describe")
+    }
+
+    if (describe.matches(Regex("^[0-9a-f]+(?:-dirty)?$")))
+    {
+        return describe
+    }
+
+    if (!describe.endsWith("-dirty"))
+    {
+        return describe
+    }
+
+    return "${describe.removeSuffix("-dirty")}-dirty-${runGitCommand(rootDirectory, "rev-parse", "--short", "HEAD")}"
+}
+
+fun runGitCommand(rootDirectory: java.io.File, vararg args: String): String
+{
+    val process = ProcessBuilder(listOf("git", *args))
+            .directory(rootDirectory)
+            .redirectErrorStream(true)
+            .start()
+    val output = ByteArrayOutputStream()
+
+    process.inputStream.use { inputStream ->
+        inputStream.transferTo(output)
+    }
+
+    val exitCode = process.waitFor()
+    val result = output.toString(Charsets.UTF_8).trim()
+
+    if (exitCode != 0 || result.isBlank())
+    {
+        throw IllegalStateException("git ${args.joinToString(" ")} failed: $result")
+    }
+
+    return result
 }

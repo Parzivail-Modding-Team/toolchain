@@ -119,14 +119,18 @@ The artifact workflow is local assembly only. It does not publish to Maven Centr
 Modrinth, or CurseForge, and it expects the relevant modules to have already been compiled by
 IntelliJ before packaging unless `--ci-build` is used.
 
+Modules can also declare `artifact_excludes` in `toolchain.toml` to omit jar-entry glob patterns
+such as `**/assets/**/datagen/**` from the final packaged artifact.
+
 To build the standalone toolchain jar that the wrapper launches:
 
 ```bash
 ./gradlew toolchainJar
 ```
 
-That writes `toolchain/bin/toolchain-<version>.jar`, which `toolchain.sh` and `toolchain.bat`
-pick up automatically.
+That writes `toolchain/bin/toolchain-<git describe>.jar`, which `toolchain.sh` and
+`toolchain.bat` pick up automatically. The version string comes from the repository's git state
+so release jars are traceable without a separate property file.
 
 Datagen is always client-derived in the bespoke toolchain. Each generated datagen configuration is
 scoped to one module by:

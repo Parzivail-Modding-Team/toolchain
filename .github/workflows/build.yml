@@ -24,11 +24,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build toolchain jar
-        run: ./gradlew --no-daemon -PtoolchainVersion=${{ github.sha }} toolchainJar
+        run: ./gradlew --no-daemon toolchainJar
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: toolchain-${{ github.sha }}
-          path: bin/toolchain-${{ github.sha }}.jar
+          name: toolchain-build
+          path: bin/toolchain-*.jar
           if-no-files-found: error

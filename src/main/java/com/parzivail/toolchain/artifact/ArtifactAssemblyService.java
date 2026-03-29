@@ -12,9 +12,11 @@ import com.parzivail.toolchain.project.VersionResolver;
 import com.parzivail.toolchain.util.ToolchainLog;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.jar.JarEntry;
@@ -174,14 +176,15 @@ public final class ArtifactAssemblyService
 	private Artifact assembleBaseArtifact(RepositoryContext repository, Path compiledOutputRoot, ModuleSpec module, String version, Path outputDirectory) throws IOException
 	{
 		var artifactId = artifactId(module);
+		var exclusions = compileArtifactExclusionMatchers(module);
 
 		var outputJar = outputDirectory.resolve(artifactId + "-" + version + ".jar");
 		Map<String, byte[]> entries = new LinkedHashMap<>();
 		var mainOutput = outputRoot(repository, compiledOutputRoot, module, SourceSetNames.MAIN);
 		var clientOutput = outputRoot(repository, compiledOutputRoot, module, SourceSetNames.CLIENT);
 
-		addOutputDirectory(entries, mainOutput, version);
-		addOutputDirectory(entries, clientOutput, version);
+		addOutputDirectory(entries, mainOutput, version, exclusions);
+		addOutputDirectory(entries, clientOutput, version, exclusions);
 		addLicense(entries, artifactId);
 
 		return new Artifact(artifactId, outputJar, entries);
@@ -296,7 +299,8 @@ public final class ArtifactAssemblyService
 	private void addOutputDirectory(
 			Map<String, byte[]> entries,
 			Path outputRoot,
-			String version
+			String version,
+			List<PathMatcher> exclusions
 	) throws IOException
 	{
 		if (!Files.isDirectory(outputRoot))
@@ -310,6 +314,11 @@ public final class ArtifactAssemblyService
 			{
 				var relativePath = outputRoot.relativize(path).toString().replace('\\', '/');
 
+				if (isArtifactEntryExcluded(relativePath, exclusions))
+				{
+					continue;
+				}
+
 				if ("fabric.mod.json".equals(relativePath))
 				{
 					entries.put(relativePath, expandedFabricModJson(path, version));
@@ -319,6 +328,56 @@ public final class ArtifactAssemblyService
 				entries.put(relativePath, Files.readAllBytes(path));
 			}
 		}
+	}
+
+	/**
+	 * Compiles the configured artifact exclusion globs for one module.
+	 *
+	 * @param module the packaged module
+	 *
+	 * @return the compiled artifact exclusion matchers
+	 */
+	private List<PathMatcher> compileArtifactExclusionMatchers(ModuleSpec module)
+	{
+		List<PathMatcher> matchers = new ArrayList<>();
+
+		for (var pattern : module.artifactExcludes())
+		{
+			var normalizedPattern = pattern.startsWith("glob:") || pattern.startsWith("regex:")
+			                        ? pattern
+			                        : "glob:" + pattern;
+			matchers.add(FileSystems.getDefault().getPathMatcher(normalizedPattern));
+		}
+
+		return matchers;
+	}
+
+	/**
+	 * Checks whether one jar entry should be excluded from packaging.
+	 *
+	 * @param relativePath the jar entry path relative to the compiled output root
+	 * @param exclusions   the compiled exclusion matchers
+	 *
+	 * @return whether the entry should be excluded
+	 */
+	private boolean isArtifactEntryExcluded(String relativePath, List<PathMatcher> exclusions)
+	{
+		if (exclusions.isEmpty())
+		{
+			return false;
+		}
+
+		var entryPath = Path.of(relativePath);
+
+		for (var matcher : exclusions)
+		{
+			if (matcher.matches(entryPath))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
