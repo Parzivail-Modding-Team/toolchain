@@ -5,12 +5,11 @@
 - Gradle:
   Builds and runs the standalone `toolchain/` project itself.
 - Toolchain:
-  Loads `../toolchain.toml`, then owns IntelliJ metadata generation and Fabric runtime bundle generation.
+  Loads the host project's `toolchain.toml`, then owns IntelliJ metadata generation and Fabric runtime bundle generation.
 - IntelliJ:
-  Owns compilation of PSWG modules for normal development runs.
+  Owns compilation of the host project's modules for normal development runs.
 
-The toolchain still reads a small amount of repo-owned version metadata from `gradle.properties`, but Gradle no longer
-owns the development runtime shape.
+Gradle only builds the standalone toolchain binary. It does not own the development runtime shape.
 
 The toolchain writes and maintains a few key outputs in the tracked repository:
 
@@ -56,7 +55,7 @@ These are useful when debugging the toolchain itself.
 
 ## Updating Fabric DLI
 
-The PSWG development workflow launches Fabric client and Fabric server through
+The development workflow launches Fabric client and Fabric server through
 `net.fabricmc.devlaunchinjector.Main`. When Fabric
 Loader, Loom, or the dev-launch-injector changes, treat the update as a contract check across a
 few focused surfaces:
@@ -72,7 +71,7 @@ few focused surfaces:
   upgrading.
 - Launch assembly:
   `toolchain/src/main/java/com/parzivail/toolchain/fabric/FabricDevLaunchService.java` is the authoritative
-  implementation of PSWG's direct-DLI workflow. If DLI changes required JVM properties, launch-config
+  implementation of the direct-DLI workflow. If DLI changes required JVM properties, launch-config
   section names, or runtime main-class behavior, update this service first.
 - Generated launch artifacts:
   the DLI contract is serialized into
@@ -116,10 +115,10 @@ Recommended update loop:
 
 ## Updating Datagen Workflow
 
-PSWG datagen is intentionally simpler than Loom's general-purpose model:
+Datagen is intentionally simpler than Loom's general-purpose model:
 
 - the toolchain only generates client-derived datagen runs
-- the datagen runtime classpath is an aggregate PSWG closure rooted at the graph's development
+- the datagen runtime classpath is an aggregate closure rooted at the graph's development
   module
 - the generated IntelliJ run configurations fence output ownership by setting both
   `fabric-api.datagen.modid` and `fabric-api.datagen.output-dir`
@@ -142,7 +141,7 @@ Common failure signals:
   usually means the generated run config lost either the `fabric-api.datagen.modid` or
   `fabric-api.datagen.output-dir` property.
 - a downstream module's datagen run cannot see upstream data or code
-  usually means the aggregate datagen launch no longer includes the full modeled PSWG dependency
+  usually means the aggregate datagen launch no longer includes the full modeled dependency
   closure.
 - datagen starts behaving differently from Loom after a Fabric API update
   usually means the Fabric API datagen properties or client-inheritance assumptions changed.
@@ -174,7 +173,7 @@ Common failure signals:
 
 - modules compile but IntelliJ does not see them in the right source set
   usually means `.iml` source/resource root modeling drifted.
-- IntelliJ rebuild only emits `toolchain` or ignores PSWG modules
+- IntelliJ rebuild only emits `toolchain` or ignores host-project modules
   usually means module registration or compiler-profile ownership drifted.
 - generated run config opens but launches with the wrong classpath
   usually means the Application XML contract changed, especially around module binding or
@@ -259,7 +258,7 @@ Recommended update loop:
 
 ## Updating Compile-Time Minecraft Transform Parity
 
-IntelliJ compiles PSWG modules against toolchain-generated Minecraft jars, not raw Mojang jars. That
+IntelliJ compiles host-project modules against toolchain-generated Minecraft jars, not raw Mojang jars. That
 compile-time parity layer depends on Fabric/Loom class-tweaker behavior and local
 `loom:injected_interfaces` metadata staying compatible.
 
