@@ -34,7 +34,9 @@ The supported day-to-day workflow is wrapper-first:
 2. IntelliJ builds host-project module outputs into `out/production/...`
 3. the generated `Fabric Client (platform)`, `Fabric Server (platform)`, or `Fabric Datagen <module> (platform)` run
    configuration launches `net.fabricmc.devlaunchinjector.Main`
-4. `toolchain.sh` or `toolchain.bat` runs the packaged toolchain jar from `toolchain/bin/`
+4. `toolchain.sh` or `toolchain.ps1` runs the packaged toolchain jar from `toolchain/bin/`
+
+On Linux, the shell wrapper requires `wget` when it needs to download a missing jar.
 
 The primary command is:
 
@@ -129,8 +131,20 @@ To build the standalone toolchain jar that the wrapper launches:
 ```
 
 That writes `toolchain/bin/toolchain-<git describe>.jar`, which `toolchain.sh` and
-`toolchain.bat` pick up automatically. The version string comes from the repository's git state
+`toolchain.ps1` pick up automatically. The version string comes from the repository's git state
 so release jars are traceable without a separate property file.
+
+If you want the wrapper to download a missing jar automatically, add a small
+`toolchain.properties` file next to the scripts:
+
+```properties
+repository=owner/toolchain
+version=1.2.3
+```
+
+When the configured version is not present in `toolchain/bin/`, the wrapper fetches
+`https://github.com/owner/toolchain/releases/download/1.2.3/toolchain-1.2.3.jar`.
+If the local jar exists, it always wins.
 
 Datagen is always client-derived in the bespoke toolchain. Each generated datagen configuration is
 scoped to one module by:
