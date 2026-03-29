@@ -180,6 +180,9 @@ public final class ToolchainProjectConfigLoader
 			spec.artifactId(artifactId);
 		}
 
+		applyOptionalStringList(table, "artifact_excludes", spec::artifactExclude);
+		applyOptionalString(table, "artifact_exclude", spec::artifactExclude);
+
 		var fabricModId = optionalString(table, "fabric_mod_id");
 
 		if (fabricModId != null && !fabricModId.isBlank())

@@ -131,6 +131,12 @@ These are the fields you will use most often.
 - Optional override for the packaged artifact name.
 - Useful when the logical module id and shipped jar name differ.
 
+`artifact_excludes`
+
+- Optional list of jar-entry glob patterns excluded from packaged artifacts.
+- Patterns are matched against the normalized packaged jar entry path.
+- This is a good fit for source-only asset trees such as `**/assets/**/datagen/**`.
+
 `aggregate_member`
 
 - Optional singular shorthand for one aggregate member.
@@ -245,6 +251,7 @@ fabric_mod_id = "examplemod"
 main_mixins = ["example.mixins.json"]
 client_mixins = ["example.client.mixins.json"]
 datagen = true
+artifact_excludes = ["**/assets/**/datagen/**"]
 
 [modules.example_entrypoint]
 kind = "fabric_resource_only"
