@@ -52,18 +52,29 @@ function Download-ToolchainJar
 		[string]$Version
 	)
 
-	if (-not (Get-Command wget -ErrorAction SilentlyContinue))
-	{
-		throw "wget is required to download toolchain-$Version.jar on Windows when the local jar is missing."
-	}
-
 	$target = Join-Path $BinDir "toolchain-$Version.jar"
 	$url = "https://github.com/$Repository/releases/download/$Version/toolchain-$Version.jar"
 
 	New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-	& wget --quiet --output-document $target $url
 
-	if ($LASTEXITCODE -ne 0 -or -not (Test-Path $target))
+	$previousProgressPreference = $ProgressPreference
+	$ProgressPreference = 'SilentlyContinue'
+
+	try
+	{
+		Invoke-WebRequest -Uri $url -OutFile $target
+	}
+	catch
+	{
+		Remove-Item -Force -ErrorAction SilentlyContinue $target
+		throw "Failed to download toolchain jar from $url"
+	}
+	finally
+	{
+		$ProgressPreference = $previousProgressPreference
+	}
+
+	if (-not (Test-Path $target))
 	{
 		throw "Failed to download toolchain jar from $url"
 	}
