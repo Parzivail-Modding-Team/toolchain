@@ -43,32 +43,6 @@ public final class IntelliJModuleNames
 	}
 
 	/**
-	 * Builds the IntelliJ module name for the standalone toolchain sources when they are registered
-	 * into the root project.
-	 *
-	 * @param projectName the IntelliJ project name
-	 *
-	 * @return the toolchain module name
-	 */
-	public static String toolchainModuleName(String projectName)
-	{
-		return projectName + ".toolchain.main";
-	}
-
-	/**
-	 * Builds the IntelliJ module file name for the standalone toolchain sources when they are
-	 * registered into the root project.
-	 *
-	 * @param projectName the IntelliJ project name
-	 *
-	 * @return the toolchain module file name
-	 */
-	public static String toolchainModuleFileName(String projectName)
-	{
-		return toolchainModuleName(projectName) + ".iml";
-	}
-
-	/**
 	 * Builds the IntelliJ module name for a generated Fabric launch classpath module.
 	 *
 	 * @param projectName   the IntelliJ project name

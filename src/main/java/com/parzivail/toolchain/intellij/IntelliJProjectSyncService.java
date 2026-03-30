@@ -1,6 +1,4 @@
 package com.parzivail.toolchain.intellij;
-
-import com.parzivail.toolchain.maven.ToolchainMavenRepositories;
 import com.parzivail.toolchain.model.*;
 import com.parzivail.toolchain.path.ToolchainPaths;
 import com.parzivail.toolchain.project.RepositoryContext;
@@ -29,26 +27,6 @@ import java.util.*;
  */
 public final class IntelliJProjectSyncService
 {
-	/**
-	 * The external libraries needed to compile and run the standalone toolchain module from the
-	 * root IntelliJ project.
-	 */
-	static final List<MavenDependencySpec> TOOLCHAIN_DEPENDENCIES = List.of(
-			new MavenDependencySpec("com.fasterxml.jackson.core:jackson-databind:2.21.1", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("com.fasterxml.jackson.core:jackson-annotations:2.21", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("com.fasterxml.jackson.core:jackson-core:2.21.1", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("io.github.wasabithumb:jtoml:1.5.0", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("io.github.wasabithumb:jtoml-api:1.5.0", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("io.github.wasabithumb:jtoml-internals:1.5.0", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("org.dom4j:dom4j:2.2.0", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("net.fabricmc:class-tweaker:0.1.1", ToolchainMavenRepositories.FABRIC),
-			new MavenDependencySpec("net.fabricmc:tiny-remapper:0.11.2", ToolchainMavenRepositories.FABRIC),
-			new MavenDependencySpec("org.vineflower:vineflower:1.11.2", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("org.ow2.asm:asm:9.9", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("org.ow2.asm:asm-commons:9.8", ToolchainMavenRepositories.MAVEN_CENTRAL),
-			new MavenDependencySpec("org.ow2.asm:asm-tree:9.8", ToolchainMavenRepositories.MAVEN_CENTRAL)
-	);
-
 	/**
 	 * Resolves IntelliJ-facing classpath and processor-path artifacts from the authoritative graph.
 	 */
@@ -178,7 +156,6 @@ public final class IntelliJProjectSyncService
 		Set<Path> resolvedArtifacts = new LinkedHashSet<>(
 				_dependencyResolver.resolveProjectLibraries(graph, loaderVersion, refresh)
 		);
-		resolvedArtifacts.addAll(_dependencyResolver.resolveExternalDependencies(TOOLCHAIN_DEPENDENCIES, refresh));
 		ToolchainLog.info("idea", "Resolved " + resolvedArtifacts.size() + " project libraries");
 
 		var librariesDirectory = ToolchainPaths.INTELLIJ_META_LIBRARIES_DIRECTORY;
@@ -219,9 +196,6 @@ public final class IntelliJProjectSyncService
 	{
 		ToolchainLog.info("idea", "Generating metadata for " + graph.modules().size() + " modeled modules");
 		Set<String> expectedModuleFiles = new LinkedHashSet<>();
-		ToolchainLog.info("idea", "Writing module metadata for toolchain");
-		expectedModuleFiles.add("toolchain/" + IntelliJModuleNames.toolchainModuleFileName(projectName));
-		writeToolchainModuleMetadata(projectName, refresh);
 
 		for (var module : graph.modules())
 		{
@@ -272,22 +246,6 @@ public final class IntelliJProjectSyncService
 	}
 
 	/**
-	 * Writes the project-root IntelliJ module metadata for the standalone toolchain sources.
-	 *
-	 * @param projectName the IntelliJ project name
-	 *
-	 * @throws IOException if the metadata cannot be written
-	 */
-	private void writeToolchainModuleMetadata(
-			String projectName,
-			boolean refresh
-	) throws IOException
-	{
-		var outputPath = ToolchainPaths.INTELLIJ_META_TOOLCHAIN_PROJECT_MODULE_DIRECTORY.resolve(IntelliJModuleNames.toolchainModuleFileName(projectName));
-		TemplateXmlWriter.write(outputPath, createToolchainModuleDocument(projectName, refresh));
-	}
-
-	/**
 	 * Creates the IntelliJ compiler configuration XML document.
 	 *
 	 * @param projectName the IntelliJ project name
@@ -318,11 +276,6 @@ public final class IntelliJProjectSyncService
 		defaultProfile.addAttribute("default", "true");
 		defaultProfile.addAttribute("name", "Default");
 		defaultProfile.addAttribute("enabled", "true");
-		addDisabledAnnotationProfile(
-				annotationProcessing,
-				IntelliJModuleNames.toolchainModuleName(projectName)
-		);
-
 		for (var module : graph.modules())
 		{
 			if (!module.annotationProcessorDependencies().isEmpty())
@@ -466,21 +419,6 @@ public final class IntelliJProjectSyncService
 	}
 
 	/**
-	 * Adds a disabled annotation processing profile for a module that must never discover processors
-	 * from its classpath.
-	 *
-	 * @param annotationProcessing the annotation processing component
-	 * @param moduleName           the IntelliJ module name
-	 */
-	private void addDisabledAnnotationProfile(Element annotationProcessing, String moduleName)
-	{
-		var profile = annotationProcessing.addElement("profile");
-		profile.addAttribute("name", "Toolchain: Disabled AP for " + moduleName);
-		profile.addAttribute("enabled", "false");
-		profile.addElement("module").addAttribute("name", moduleName);
-	}
-
-	/**
 	 * Adds IntelliJ Javac option override entries for modeled modules and source sets.
 	 *
 	 * @param additionalOptions the `ADDITIONAL_OPTIONS_OVERRIDE` option element
@@ -494,9 +432,6 @@ public final class IntelliJProjectSyncService
 		                 .addAttribute("options", "-Xmaxerrs 1000 -Xdiags:verbose");
 		additionalOptions.addElement("module")
 		                 .addAttribute("name", projectName + ".main")
-		                 .addAttribute("options", "-Xmaxerrs 1000 -Xdiags:verbose");
-		additionalOptions.addElement("module")
-		                 .addAttribute("name", IntelliJModuleNames.toolchainModuleName(projectName))
 		                 .addAttribute("options", "-Xmaxerrs 1000 -Xdiags:verbose");
 
 		for (var module : graph.modules())
@@ -658,7 +593,6 @@ public final class IntelliJProjectSyncService
 		var modules = component.addElement("modules");
 
 		addRegisteredModule(modules, "$PROJECT_DIR$/.idea/" + projectName + ".iml");
-		addRegisteredModule(modules, "$PROJECT_DIR$/.idea/modules/projects/toolchain/" + IntelliJModuleNames.toolchainModuleFileName(projectName));
 
 		for (var module : graph.modules())
 		{
@@ -681,28 +615,6 @@ public final class IntelliJProjectSyncService
 			addRegisteredModule(modules, preservedModulePath);
 		}
 
-		return document;
-	}
-
-	/**
-	 * Creates the IntelliJ module document for the standalone toolchain sources inside the root
-	 * project.
-	 *
-	 * @param projectName the IntelliJ project name
-	 *
-	 * @return the toolchain module document
-	 *
-	 * @throws IOException if external toolchain dependencies cannot be resolved
-	 */
-	private Document createToolchainModuleDocument(
-			String projectName,
-			boolean refresh
-	) throws IOException
-	{
-		var document = DocumentHelper.createDocument();
-		var moduleElement = document.addElement("module");
-		moduleElement.addAttribute("version", "4");
-		addToolchainRootManager(moduleElement, projectName, refresh);
 		return document;
 	}
 
@@ -780,52 +692,6 @@ public final class IntelliJProjectSyncService
 		rootManager.addElement("orderEntry").addAttribute("type", "sourceFolder").addAttribute("forTests", "false");
 		addModuleDependencyEntries(rootManager, projectName, graph, module, sourceSetName);
 		addLibraryDependencyEntries(rootManager, graph, loaderVersion, refresh, module, sourceSetName);
-	}
-
-	/**
-	 * Adds the root manager and classpath model for the toolchain module.
-	 *
-	 * @param moduleElement the module element
-	 * @param projectName   the IntelliJ project name
-	 *
-	 * @throws IOException if external toolchain dependencies cannot be resolved
-	 */
-	private void addToolchainRootManager(
-			Element moduleElement,
-			String projectName,
-			boolean refresh
-	) throws IOException
-	{
-		var toolchainRoot = ToolchainPaths.TOOLCHAIN_ROOT;
-		var rootManager = moduleElement.addElement("component");
-		rootManager.addAttribute("name", "NewModuleRootManager");
-		rootManager.addAttribute("inherit-compiler-output", "false");
-		rootManager.addElement("output")
-		           .addAttribute("url", IntelliJPathMacros.generatedModuleOutputUrl(IntelliJModuleNames.toolchainModuleName(projectName)));
-		rootManager.addElement("exclude-output");
-
-		var content = rootManager.addElement("content");
-		content.addAttribute("url", IntelliJPathMacros.toolchainModuleFileUrl(toolchainRoot, toolchainRoot));
-		content.addElement("sourceFolder")
-		       .addAttribute("url", IntelliJPathMacros.toolchainModuleFileUrl(toolchainRoot, ToolchainPaths.TOOLCHAIN_MAIN_SOURCES))
-		       .addAttribute("isTestSource", "false");
-		content.addElement("sourceFolder")
-		       .addAttribute("url", IntelliJPathMacros.toolchainModuleFileUrl(toolchainRoot, ToolchainPaths.TOOLCHAIN_MAIN_RESOURCES))
-		       .addAttribute("type", "java-resource")
-		       .addAttribute("isTestSource", "false");
-		content.addElement("excludeFolder")
-		       .addAttribute("url", IntelliJPathMacros.toolchainModuleFileUrl(toolchainRoot, toolchainRoot.resolve("build")));
-
-		rootManager.addElement("orderEntry").addAttribute("type", "inheritedJdk");
-		rootManager.addElement("orderEntry").addAttribute("type", "sourceFolder").addAttribute("forTests", "false");
-
-		for (var dependency : _dependencyResolver.resolveExternalDependencies(TOOLCHAIN_DEPENDENCIES, refresh))
-		{
-			rootManager.addElement("orderEntry")
-			           .addAttribute("type", "library")
-			           .addAttribute("name", projectLibraryName(dependency))
-			           .addAttribute("level", "project");
-		}
 	}
 
 	/**

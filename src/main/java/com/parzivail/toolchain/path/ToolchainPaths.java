@@ -59,16 +59,6 @@ public class ToolchainPaths
 	public static final Path TOOLCHAIN_ROOT = PROJECT_ROOT.resolve(TOOLCHAIN_FOLDER_NAME);
 
 	/**
-	 * The toolchain source directory.
-	 */
-	public static final Path TOOLCHAIN_MAIN_SOURCES = TOOLCHAIN_ROOT.resolve("src", "main", "java");
-
-	/**
-	 * The toolchain resource directory.
-	 */
-	public static final Path TOOLCHAIN_MAIN_RESOURCES = TOOLCHAIN_ROOT.resolve("src", "main", "resources");
-
-	/**
 	 * The tracked configuration file name.
 	 */
 	public static final String CONFIG_FILE_NAME = "toolchain.toml";
@@ -192,11 +182,6 @@ public class ToolchainPaths
 	 * The IntelliJ projects module metadata directory.
 	 */
 	public static final Path INTELLIJ_META_PROJECTS_MODULE_DIRECTORY = INTELLIJ_META_MODULES_DIRECTORY.resolve("projects");
-
-	/**
-	 * The IntelliJ toolchain project module metadata directory.
-	 */
-	public static final Path INTELLIJ_META_TOOLCHAIN_PROJECT_MODULE_DIRECTORY = INTELLIJ_META_PROJECTS_MODULE_DIRECTORY.resolve("toolchain");
 
 	/**
 	 * The IntelliJ project modules metadata file.

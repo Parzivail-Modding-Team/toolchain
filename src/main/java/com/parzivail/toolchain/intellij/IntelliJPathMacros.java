@@ -97,36 +97,6 @@ public final class IntelliJPathMacros
 	}
 
 	/**
-	 * Builds a module-local `file://...` URL for the standalone toolchain module registered under the
-	 * root project.
-	 *
-	 * @param toolchainRoot the standalone toolchain root
-	 * @param path          the target path
-	 *
-	 * @return the file URL
-	 */
-	public static String toolchainModuleFileUrl(Path toolchainRoot, Path path)
-	{
-		var normalizedToolchainRoot = toolchainRoot.toAbsolutePath().normalize();
-		var normalizedPath = path.toAbsolutePath().normalize();
-
-		if (normalizedPath.startsWith(normalizedToolchainRoot))
-		{
-			var relativePath = normalizedToolchainRoot.relativize(normalizedPath);
-
-			if (relativePath.toString().isEmpty())
-			{
-				return "file://$MODULE_DIR$/../../../../toolchain";
-			}
-
-			return "file://$MODULE_DIR$/../../../../toolchain/"
-			       + relativePath.toString().replace('\\', '/');
-		}
-
-		return "file://" + normalizedPath.toString().replace('\\', '/');
-	}
-
-	/**
 	 * Builds the module-relative output URL used by generated `.iml` files under
 	 * `.idea/modules/projects/...`.
 	 *
