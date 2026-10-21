@@ -26,12 +26,13 @@ public final class SourceSetLayout
 	 */
 	public static List<Path> sourceRoots(ModuleSpec module, String sourceSetName)
 	{
-		if (SourceSetNames.CLIENT.equals(sourceSetName))
+		return switch (sourceSetName)
 		{
-			return module.clientSources();
-		}
-
-		return module.mainSources();
+			case SourceSetNames.CLIENT -> module.clientSources();
+			case SourceSetNames.GAMETEST -> module.gametestSources();
+			case SourceSetNames.GAMETEST_CLIENT -> module.gametestClientSources();
+			default -> module.mainSources();
+		};
 	}
 
 	/**
@@ -44,11 +45,24 @@ public final class SourceSetLayout
 	 */
 	public static List<Path> resourceRoots(ModuleSpec module, String sourceSetName)
 	{
-		if (SourceSetNames.CLIENT.equals(sourceSetName))
+		return switch (sourceSetName)
 		{
-			return module.clientResources();
-		}
+			case SourceSetNames.CLIENT -> module.clientResources();
+			case SourceSetNames.GAMETEST -> module.gametestResources();
+			case SourceSetNames.GAMETEST_CLIENT -> module.gametestClientResources();
+			default -> mainResourceRoots(module);
+		};
+	}
 
+	/**
+	 * Gets the main resource roots, including the checked-in datagen output when one is declared.
+	 *
+	 * @param module the module specification
+	 *
+	 * @return the main resource roots
+	 */
+	private static List<Path> mainResourceRoots(ModuleSpec module)
+	{
 		List<Path> roots = new ArrayList<>(module.mainResources());
 
 		if (module.datagenOutput() != null && !roots.contains(module.datagenOutput()))
@@ -62,6 +76,9 @@ public final class SourceSetLayout
 	/**
 	 * Gets the generated Java roots for one module source set.
 	 *
+	 * <p>GameTest source sets are compiled without annotation processing and therefore never own
+	 * generated roots.
+	 *
 	 * @param module        the module specification
 	 * @param sourceSetName the source-set name
 	 *
@@ -69,6 +86,11 @@ public final class SourceSetLayout
 	 */
 	public static List<Path> generatedRoots(ModuleSpec module, String sourceSetName)
 	{
+		if (SourceSetNames.isGameTest(sourceSetName))
+		{
+			return List.of();
+		}
+
 		if (SourceSetNames.CLIENT.equals(sourceSetName))
 		{
 			return module.generatedClientSources();
@@ -89,5 +111,65 @@ public final class SourceSetLayout
 		return !module.clientSources().isEmpty()
 		       || !module.clientResources().isEmpty()
 		       || !module.generatedClientSources().isEmpty();
+	}
+
+	/**
+	 * Checks whether one module materially has a common/server GameTest source set.
+	 *
+	 * @param module the module specification
+	 *
+	 * @return whether the module has GameTest sources or resources
+	 */
+	public static boolean hasGameTestSourceSet(ModuleSpec module)
+	{
+		return !module.gametestSources().isEmpty() || !module.gametestResources().isEmpty();
+	}
+
+	/**
+	 * Checks whether one module materially has a client GameTest source set.
+	 *
+	 * @param module the module specification
+	 *
+	 * @return whether the module has client GameTest sources or resources
+	 */
+	public static boolean hasGameTestClientSourceSet(ModuleSpec module)
+	{
+		return !module.gametestClientSources().isEmpty() || !module.gametestClientResources().isEmpty();
+	}
+
+	/**
+	 * Lists the GameTest source sets that one module materially has, common set first.
+	 *
+	 * @param module the module specification
+	 *
+	 * @return the GameTest source-set names, possibly empty
+	 */
+	public static List<String> gameTestSourceSets(ModuleSpec module)
+	{
+		List<String> names = new ArrayList<>();
+
+		if (hasGameTestSourceSet(module))
+		{
+			names.add(SourceSetNames.GAMETEST);
+		}
+
+		if (hasGameTestClientSourceSet(module))
+		{
+			names.add(SourceSetNames.GAMETEST_CLIENT);
+		}
+
+		return names;
+	}
+
+	/**
+	 * Checks whether one module has any GameTest source set.
+	 *
+	 * @param module the module specification
+	 *
+	 * @return whether the module has a common or client GameTest source set
+	 */
+	public static boolean hasGameTests(ModuleSpec module)
+	{
+		return hasGameTestSourceSet(module) || hasGameTestClientSourceSet(module);
 	}
 }

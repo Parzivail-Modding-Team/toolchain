@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.parzivail.toolchain.build.CompilationOutputLayout;
 import com.parzivail.toolchain.model.ModuleAggregationResolver;
 import com.parzivail.toolchain.model.ModuleSpec;
+import com.parzivail.toolchain.model.SourceSetLayout;
 import com.parzivail.toolchain.model.SourceSetNames;
 import com.parzivail.toolchain.path.ToolchainPaths;
 import com.parzivail.toolchain.project.RepositoryContext;
@@ -186,8 +187,38 @@ public final class ArtifactAssemblyService
 		addOutputDirectory(entries, mainOutput, version, exclusions);
 		addOutputDirectory(entries, clientOutput, version, exclusions);
 		addLicense(entries, artifactId);
+		auditGameTestIsolation(repository, compiledOutputRoot, module, artifactId, entries);
 
 		return new Artifact(artifactId, outputJar, entries);
+	}
+
+	/**
+	 * Fails the assembly when an artifact would carry GameTest content.
+	 *
+	 * @param repository         the discovered repository context
+	 * @param compiledOutputRoot the optional compiled output root override
+	 * @param module             the packaged module
+	 * @param artifactId         the artifact identifier
+	 * @param entries            the jar entries about to be packaged
+	 *
+	 * @throws IOException if the artifact contains GameTest content
+	 */
+	private void auditGameTestIsolation(
+			RepositoryContext repository,
+			Path compiledOutputRoot,
+			ModuleSpec module,
+			String artifactId,
+			Map<String, byte[]> entries
+	) throws IOException
+	{
+		List<Path> gameTestOutputs = new ArrayList<>();
+
+		for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+		{
+			gameTestOutputs.add(outputRoot(repository, compiledOutputRoot, module, gameTestSourceSet));
+		}
+
+		GameTestArtifactAudit.verify(artifactId, entries, gameTestOutputs, _mapper);
 	}
 
 	private record Artifact(String artifactId, Path outputJar, Map<String, byte[]> entries)

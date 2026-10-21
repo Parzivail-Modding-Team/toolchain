@@ -45,6 +45,42 @@ public final class CiCompilationService
 	 */
 	public Path compileArtifactInputs(String requestedModuleId, boolean refresh) throws IOException
 	{
+		return compile(requestedModuleId, refresh, false);
+	}
+
+	/**
+	 * Compiles the requested closure, including every GameTest source set in it, into the
+	 * toolchain-owned output tree.
+	 *
+	 * <p>GameTest source sets are compiled after the production source sets of the same module, against
+	 * the common Minecraft classes for the common set and the client classes for the client set. They are
+	 * compiled without annotation processing.
+	 *
+	 * @param requestedModuleId the requested root module, or {@code null} for the graph default
+	 * @param refresh           whether to refresh external dependency resolution
+	 *
+	 * @return the output root that now contains compiled module outputs
+	 *
+	 * @throws IOException if compilation fails
+	 */
+	public Path compileTestInputs(String requestedModuleId, boolean refresh) throws IOException
+	{
+		return compile(requestedModuleId, refresh, true);
+	}
+
+	/**
+	 * Compiles the requested closure into the toolchain-owned output tree.
+	 *
+	 * @param requestedModuleId the requested root module, or {@code null} for the graph default
+	 * @param refresh           whether to refresh external dependency resolution
+	 * @param includeGameTests  whether GameTest source sets are compiled as well
+	 *
+	 * @return the output root that now contains compiled module outputs
+	 *
+	 * @throws IOException if compilation fails
+	 */
+	private Path compile(String requestedModuleId, boolean refresh, boolean includeGameTests) throws IOException
+	{
 		var repository = RepositoryContext.load();
 		var rootModuleId = requestedModuleId == null || requestedModuleId.isBlank()
 		                   ? repository.buildGraph().developmentModuleId()
@@ -61,6 +97,16 @@ public final class CiCompilationService
 			if (SourceSetLayout.hasClientSourceSet(module))
 			{
 				compileSourceSet(repository, refresh, outputRoot, module, SourceSetNames.CLIENT);
+			}
+
+			if (!includeGameTests)
+			{
+				continue;
+			}
+
+			for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+			{
+				compileSourceSet(repository, refresh, outputRoot, module, gameTestSourceSet);
 			}
 		}
 
@@ -308,8 +354,13 @@ public final class CiCompilationService
 
 		var diagnostics = new DiagnosticCollector<JavaFileObject>();
 		var classpath = compileClasspath(repository, refresh, outputRoot, module, sourceSetName);
-		var processorPath = processorPath(repository, refresh, outputRoot, module);
-		var processorClassNames = annotationProcessorClassNames(repository.buildGraph(), module);
+		var runsAnnotationProcessing = !SourceSetNames.isGameTest(sourceSetName);
+		List<Path> processorPath = runsAnnotationProcessing
+		                           ? processorPath(repository, refresh, outputRoot, module)
+		                           : List.of();
+		List<String> processorClassNames = runsAnnotationProcessing
+		                                   ? annotationProcessorClassNames(repository.buildGraph(), module)
+		                                   : List.of();
 		List<String> options = new ArrayList<>();
 
 		options.add("--release");
@@ -410,16 +461,16 @@ public final class CiCompilationService
 	) throws IOException
 	{
 		Set<Path> classpath = new LinkedHashSet<>();
-		var includeClient = SourceSetNames.CLIENT.equals(sourceSetName);
+		var includeClient = SourceSetNames.isClientEnvironment(sourceSetName);
 		var graph = repository.buildGraph();
 
-		if (includeClient)
+		for (var ownSourceSetName : ownSourceSetsVisibleTo(module, sourceSetName))
 		{
 			classpath.add(CompilationOutputLayout.sourceSetOutputRoot(
 					outputRoot,
 					repository.projectName(),
 					module.id(),
-					SourceSetNames.MAIN
+					ownSourceSetName
 			));
 		}
 
@@ -436,17 +487,100 @@ public final class CiCompilationService
 			);
 		}
 
+		if (SourceSetNames.isGameTest(sourceSetName))
+		{
+			addGameTestDependencyOutputs(graph, outputRoot, repository.projectName(), module, includeClient, classpath);
+		}
+
 		classpath.addAll(
-				_dependencyResolver.resolveModuleLibraries(
-						graph,
-						repository.loaderVersion(),
-						refresh,
-						module,
-						includeClient
-				)
+				SourceSetNames.isGameTest(sourceSetName)
+				? _dependencyResolver.resolveGameTestLibraries(graph, repository.loaderVersion(), refresh, module, includeClient)
+				: _dependencyResolver.resolveModuleLibraries(graph, repository.loaderVersion(), refresh, module, includeClient)
 		);
 
 		return List.copyOf(classpath);
+	}
+
+	/**
+	 * Lists the source sets of the compiled module itself that its own compile classpath must contain.
+	 *
+	 * <p>The client and both GameTest source sets see the main source set. The client GameTest source set
+	 * additionally sees the client and common GameTest source sets, so test helpers can be shared between the
+	 * two kinds of test.
+	 *
+	 * @param module        the module being compiled
+	 * @param sourceSetName the source set being compiled
+	 *
+	 * @return the module's own source-set names, in classpath order
+	 */
+	private List<String> ownSourceSetsVisibleTo(ModuleSpec module, String sourceSetName)
+	{
+		List<String> names = new ArrayList<>();
+
+		if (SourceSetNames.MAIN.equals(sourceSetName))
+		{
+			return names;
+		}
+
+		names.add(SourceSetNames.MAIN);
+
+		if (SourceSetNames.GAMETEST_CLIENT.equals(sourceSetName))
+		{
+			if (SourceSetLayout.hasClientSourceSet(module))
+			{
+				names.add(SourceSetNames.CLIENT);
+			}
+
+			if (SourceSetLayout.hasGameTestSourceSet(module))
+			{
+				names.add(SourceSetNames.GAMETEST);
+			}
+		}
+
+		return names;
+	}
+
+	/**
+	 * Adds the compiled GameTest outputs of every GameTest dependency of a module.
+	 *
+	 * @param graph         the authoritative build graph
+	 * @param outputRoot    the toolchain-owned output root
+	 * @param projectName   the IntelliJ project name
+	 * @param module        the module being compiled
+	 * @param includeClient whether the consumer is a client GameTest source set
+	 * @param classpath     the accumulated classpath entries
+	 */
+	private void addGameTestDependencyOutputs(
+			BuildGraph graph,
+			Path outputRoot,
+			String projectName,
+			ModuleSpec module,
+			boolean includeClient,
+			Set<Path> classpath
+	)
+	{
+		for (var dependency : GameTestModuleResolver.gameTestDependencies(graph, module))
+		{
+			if (SourceSetLayout.hasGameTestSourceSet(dependency))
+			{
+				classpath.add(CompilationOutputLayout.sourceSetOutputRoot(
+						outputRoot,
+						projectName,
+						dependency.id(),
+						SourceSetNames.GAMETEST
+				));
+			}
+
+			if (includeClient && SourceSetLayout.hasGameTestClientSourceSet(dependency))
+			{
+				classpath.add(CompilationOutputLayout.sourceSetOutputRoot(
+						outputRoot,
+						projectName,
+						dependency.id(),
+						SourceSetNames.GAMETEST_CLIENT
+				));
+			}
+		}
 	}
 
 	/**
@@ -483,7 +617,7 @@ public final class CiCompilationService
 				SourceSetNames.MAIN
 		));
 
-		if (SourceSetNames.CLIENT.equals(consumerSourceSetName)
+		if (SourceSetNames.isClientEnvironment(consumerSourceSetName)
 		    && SourceSetNames.CLIENT.equals(SourceSetDependencyResolver.dependencySourceSetName(graph, moduleId, consumerSourceSetName)))
 		{
 			output.add(CompilationOutputLayout.sourceSetOutputRoot(

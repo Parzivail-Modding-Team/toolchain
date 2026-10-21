@@ -4,14 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.parzivail.toolchain.intellij.IntelliJDependencyResolver;
 import com.parzivail.toolchain.intellij.IntelliJModuleNames;
 import com.parzivail.toolchain.intellij.IntelliJRunConfigurationSupport;
+import com.parzivail.toolchain.model.BuildGraph;
+import com.parzivail.toolchain.model.GameTestModuleResolver;
 import com.parzivail.toolchain.model.MavenDependencySpec;
 import com.parzivail.toolchain.model.ModuleAggregationResolver;
 import com.parzivail.toolchain.model.ModuleSpec;
+import com.parzivail.toolchain.model.SourceSetLayout;
 import com.parzivail.toolchain.model.SourceSetNames;
 import com.parzivail.toolchain.path.ToolchainPaths;
 import com.parzivail.toolchain.project.RepositoryContext;
 import com.parzivail.toolchain.runtime.LaunchEnvironment;
+import com.parzivail.toolchain.runtime.LaunchHost;
 import com.parzivail.toolchain.runtime.LaunchIdentity;
+import com.parzivail.toolchain.runtime.LaunchKind;
 import com.parzivail.toolchain.runtime.VanillaLaunchConfig;
 import com.parzivail.toolchain.runtime.VanillaLaunchService;
 import com.parzivail.toolchain.source.SourceAttachmentResolver;
@@ -19,6 +24,7 @@ import com.parzivail.toolchain.template.FileTemplateRenderer;
 import com.parzivail.toolchain.template.TemplateXmlWriter;
 import com.parzivail.toolchain.template.XmlEscaper;
 import com.parzivail.toolchain.util.HostPlatform;
+import com.parzivail.toolchain.util.ToolchainLog;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -54,6 +60,46 @@ public final class FabricDevLaunchService
 	 * Whether ANSI logging is enabled in generated development launches.
 	 */
 	public static final boolean DEFAULT_ANSI_LOGGING_ENABLED = true;
+
+	/**
+	 * The system property that tells test code where to write its diagnostics, screenshots and reports.
+	 */
+	public static final String GAMETEST_RESULTS_DIRECTORY_PROPERTY = "-Dtoolchain.gametest.results-dir";
+
+	/**
+	 * The file name of the server GameTest JUnit XML report inside the results directory.
+	 */
+	public static final String SERVER_REPORT_FILE_NAME = "server-report.xml";
+
+	/**
+	 * The Fabric API system property that turns the dedicated server into the headless GameTest server.
+	 */
+	private static final String FABRIC_SERVER_GAMETEST_PROPERTY = "-Dfabric-api.gametest";
+
+	/**
+	 * The Fabric API system property that names the JUnit XML report written by the GameTest server.
+	 */
+	private static final String FABRIC_SERVER_GAMETEST_REPORT_PROPERTY = "-Dfabric-api.gametest.report-file";
+
+	/**
+	 * The Fabric API system property that selects the server tests to run.
+	 */
+	private static final String FABRIC_SERVER_GAMETEST_FILTER_PROPERTY = "-Dfabric-api.gametest.filter";
+
+	/**
+	 * The Fabric API system property that turns the client into the client GameTest runner.
+	 */
+	private static final String FABRIC_CLIENT_GAMETEST_PROPERTY = "-Dfabric.client.gametest";
+
+	/**
+	 * The Fabric API system property that restricts the client tests to a set of test-mod identifiers.
+	 */
+	private static final String FABRIC_CLIENT_GAMETEST_MOD_ID_PROPERTY = "-Dfabric.client.gametest.modid";
+
+	/**
+	 * The Fabric API system property that receives screenshot templates which do not exist yet.
+	 */
+	private static final String FABRIC_CLIENT_GAMETEST_TEMPLATES_PROPERTY = "-Dfabric.client.gametest.testModResourcesPath";
 
 	/**
 	 * The shared JSON serializer.
@@ -107,11 +153,34 @@ public final class FabricDevLaunchService
 			LaunchIdentity identity
 	) throws IOException
 	{
+		return prepareLaunch(FabricLaunchRequest.development(versionId, refresh, moduleId, environment, identity));
+	}
+
+	/**
+	 * Prepares a Fabric-style launch bundle described by a request.
+	 *
+	 * <p>GameTest launches reuse the vanilla runtime baseline of the same environment but run from their
+	 * own instance directory, so tests never share a game directory, world or options file with a
+	 * development launch.
+	 *
+	 * @param request the launch request
+	 *
+	 * @return the prepared launch configuration
+	 *
+	 * @throws IOException if generation fails
+	 */
+	public VanillaLaunchConfig prepareLaunch(FabricLaunchRequest request) throws IOException
+	{
+		var versionId = request.versionId();
+		var environment = request.environment();
 		var repository = RepositoryContext.load();
-		var vanillaLaunch = prepareVanillaLaunch(versionId, refresh, environment, identity);
-		var runtimeArtifacts = resolveFabricRuntimeArtifacts(repository.loaderVersion(), refresh, environment);
-		var moduleInjection = resolveModuleInjection(repository, moduleId, refresh, environment);
-		var launchPaths = createLaunchPaths(repository.projectName(), versionId, environment);
+		var launchPaths = createLaunchPaths(repository.projectName(), request);
+		var vanillaLaunch = rebaseOntoInstance(
+				prepareVanillaLaunch(versionId, request.refresh(), environment, request.identity()),
+				launchPaths
+		);
+		var runtimeArtifacts = resolveFabricRuntimeArtifacts(repository.loaderVersion(), request.refresh(), environment);
+		var moduleInjection = resolveModuleInjection(repository, request);
 
 		prepareLaunchFiles(versionId, vanillaLaunch, moduleInjection.moduleRoots(), launchPaths, environment);
 		var jvmArgs = buildFabricJvmArgs(
@@ -119,7 +188,7 @@ public final class FabricDevLaunchService
 				runtimeArtifacts,
 				moduleInjection,
 				launchPaths,
-				environment
+				request
 		);
 		var fabricLaunch = createFabricLaunchConfig(
 				versionId,
@@ -127,16 +196,22 @@ public final class FabricDevLaunchService
 				launchPaths.loggingConfigPath(),
 				vanillaLaunch,
 				environment,
-				identity
+				request.identity()
 		);
 
 		FabricLaunchSupport.writeLaunchJson(_mapper, launchPaths.serializedLaunchPath(), fabricLaunch);
+
+		if (request.host() != LaunchHost.INTELLIJ)
+		{
+			return fabricLaunch;
+		}
+
 		writeIdeaLaunchModule(
 				repository,
 				moduleInjection,
 				fabricLaunch,
 				launchPaths,
-				refresh
+				request.refresh()
 		);
 		writeIdeaRunConfiguration(
 				repository,
@@ -145,9 +220,45 @@ public final class FabricDevLaunchService
 				moduleInjection,
 				launchPaths,
 				launchPaths.platformDisplayName(),
-				refresh
+				request.refresh()
 		);
 		return fabricLaunch;
+	}
+
+	/**
+	 * Moves the game and working directories of a vanilla baseline into another instance.
+	 *
+	 * <p>The vanilla baseline always materializes the development instance of its environment. A launch
+	 * of another kind keeps that baseline's libraries and natives but runs from its own game directory.
+	 *
+	 * @param vanillaLaunch the prepared vanilla launch baseline
+	 * @param launchPaths   the generated launch path layout of the requested launch
+	 *
+	 * @return the baseline pointing at the requested instance's game directory
+	 */
+	private VanillaLaunchConfig rebaseOntoInstance(VanillaLaunchConfig vanillaLaunch, FabricLaunchPaths launchPaths)
+	{
+		if (launchPaths.kind() == LaunchKind.DEVELOPMENT)
+		{
+			return vanillaLaunch;
+		}
+
+		var gameDirectory = launchPaths.gameDirectory();
+
+		return new VanillaLaunchConfig(
+				vanillaLaunch.versionId(),
+				vanillaLaunch.mainClass(),
+				vanillaLaunch.javaExecutable(),
+				gameDirectory,
+				gameDirectory,
+				vanillaLaunch.assetsRoot(),
+				vanillaLaunch.assetIndexId(),
+				vanillaLaunch.nativesDirectory(),
+				vanillaLaunch.loggingConfigurationFile(),
+				vanillaLaunch.classpath(),
+				vanillaLaunch.jvmArgs(),
+				vanillaLaunch.gameArgs()
+		);
 	}
 
 	/**
@@ -195,22 +306,25 @@ public final class FabricDevLaunchService
 	/**
 	 * Resolves the optional module injection contract for a generated Fabric launch.
 	 *
-	 * @param repository  the discovered repository context
-	 * @param moduleId    the optional module identifier
-	 * @param refresh     whether to revalidate cached external runtime artifacts
-	 * @param environment the launch environment
+	 * <p>A GameTest launch additionally puts the test-only outputs of every GameTest-enabled module in the
+	 * closure on the classpath. Each of those outputs carries its own test {@code fabric.mod.json}, so Fabric
+	 * Loader discovers the test mods the same way it discovers the shipped modules.
+	 *
+	 * @param repository the discovered repository context
+	 * @param request    the launch request
 	 *
 	 * @return the resolved module injection contract
 	 *
-	 * @throws IOException if supporting external runtime dependencies cannot be resolved
+	 * @throws IOException if supporting external runtime dependencies cannot be resolved or a GameTest
+	 *                     launch has nothing to run
 	 */
 	private FabricModuleInjection resolveModuleInjection(
 			RepositoryContext repository,
-			String moduleId,
-			boolean refresh,
-			LaunchEnvironment environment
+			FabricLaunchRequest request
 	) throws IOException
 	{
+		var moduleId = request.moduleId();
+
 		if (moduleId == null || moduleId.isBlank())
 		{
 			return new FabricModuleInjection(
@@ -224,19 +338,25 @@ public final class FabricDevLaunchService
 		var graph = repository.buildGraph();
 		var projectName = repository.projectName();
 		var rootModule = ModuleAggregationResolver.requireModule(graph, moduleId);
-		var moduleRoots = resolveOutputRoots(projectName, rootModule, environment);
+		var moduleRoots = resolveOutputRoots(request, projectName, rootModule);
 		List<Path> dependencyRoots = new ArrayList<>();
 		List<MavenDependencySpec> runtimeDependencies = new ArrayList<>(rootModule.runtimeDependencies());
 
 		for (var dependencyModule : ModuleAggregationResolver.aggregatedDependencies(graph, moduleId))
 		{
-			dependencyRoots.addAll(resolveOutputRoots(projectName, dependencyModule, environment));
+			dependencyRoots.addAll(resolveOutputRoots(request, projectName, dependencyModule));
 			runtimeDependencies.addAll(dependencyModule.runtimeDependencies());
+		}
+
+		if (request.kind().includesGameTests())
+		{
+			dependencyRoots.addAll(resolveGameTestOutputRoots(request, graph, projectName, moduleId));
+			runtimeDependencies.addAll(gameTestRuntimeDependencies(request, graph, moduleId));
 		}
 
 		var externalRuntimeArtifacts = resolveRuntimeDependencies(
 				runtimeDependencies,
-				refresh
+				request.refresh()
 		);
 
 		return new FabricModuleInjection(
@@ -248,24 +368,130 @@ public final class FabricDevLaunchService
 	}
 
 	/**
+	 * Collects the Maven dependencies that the GameTest source sets of a launch need at runtime.
+	 *
+	 * <p>The client-only dependencies are only added to a client launch, so a headless server never loads
+	 * client test API classes.
+	 *
+	 * @param request  the GameTest launch request
+	 * @param graph    the authoritative build graph
+	 * @param moduleId the launch root module identifier
+	 *
+	 * @return the distinct GameTest runtime dependencies
+	 */
+	private List<MavenDependencySpec> gameTestRuntimeDependencies(
+			FabricLaunchRequest request,
+			BuildGraph graph,
+			String moduleId
+	)
+	{
+		List<MavenDependencySpec> dependencies = new ArrayList<>();
+
+		for (var module : GameTestModuleResolver.launchModules(graph, moduleId))
+		{
+			dependencies.addAll(module.gametestCompileDependencies());
+
+			if (request.environment().isClient())
+			{
+				dependencies.addAll(module.gametestClientDependencies());
+			}
+		}
+
+		return dependencies.stream().distinct().toList();
+	}
+
+	/**
+	 * Resolves the compiled test-only roots that a GameTest launch adds to the classpath.
+	 *
+	 * <p>A launch with no GameTest module, a GameTest module without its test descriptor, or a missing
+	 * GameTest output is rejected here. Each of those would otherwise start Minecraft, discover zero
+	 * tests and report success.
+	 *
+	 * @param request     the GameTest launch request
+	 * @param graph       the authoritative build graph
+	 * @param projectName the IntelliJ project name
+	 * @param moduleId    the launch root module identifier
+	 *
+	 * @return the ordered GameTest output roots
+	 *
+	 * @throws IOException if there is nothing runnable to launch
+	 */
+	private List<Path> resolveGameTestOutputRoots(
+			FabricLaunchRequest request,
+			BuildGraph graph,
+			String projectName,
+			String moduleId
+	) throws IOException
+	{
+		var gameTestModules = GameTestModuleResolver.launchModules(graph, moduleId);
+
+		if (gameTestModules.isEmpty())
+		{
+			throw new IOException("No module in the closure of '" + moduleId + "' declares GameTest source sets");
+		}
+
+		ToolchainLog.info("gametest", "GameTest modules: " + gameTestModules.stream().map(ModuleSpec::id).toList());
+
+		List<Path> roots = new ArrayList<>();
+
+		for (var module : gameTestModules)
+		{
+			var descriptor = ToolchainPaths.PROJECT_ROOT.resolve(module.gametestFabricModJson());
+
+			if (!Files.isRegularFile(descriptor))
+			{
+				var message = "Module '" + module.id() + "' has GameTest source sets but no test mod descriptor at " + descriptor;
+
+				if (request.host() == LaunchHost.PROCESS)
+				{
+					throw new IOException(message);
+				}
+
+				ToolchainLog.info("gametest", "Warning: " + message);
+			}
+
+			var moduleRoots = FabricModuleOutputResolver.resolveGameTestOutputRoots(
+					request.outputRoot(),
+					projectName,
+					module,
+					request.environment().isClient(),
+					"gametest",
+					true
+			);
+
+			if (moduleRoots.isEmpty() && request.host() == LaunchHost.PROCESS)
+			{
+				throw new IOException("Module '" + module.id() + "' has no compiled GameTest output under " + request.outputRoot());
+			}
+
+			roots.addAll(moduleRoots);
+		}
+
+		return roots;
+	}
+
+	/**
 	 * Creates the standard path layout for a generated Fabric launch bundle.
 	 *
-	 * @param versionId the Minecraft version identifier
+	 * @param projectName the IntelliJ project name
+	 * @param request     the launch request
 	 *
 	 * @return the derived launch paths
 	 */
 	private FabricLaunchPaths createLaunchPaths(
 			String projectName,
-			String versionId,
-			LaunchEnvironment environment
+			FabricLaunchRequest request
 	)
 	{
+		var kind = request.kind();
+		var environment = request.environment();
 		var platform = HostPlatform.current();
 		var platformId = platform.id();
-		var instanceRoot = ToolchainPaths.getInstanceRoot(versionId, environment, platform);
+		var instanceRoot = ToolchainPaths.getInstanceRoot(request.versionId(), kind, environment, platform);
 		var configDirectory = instanceRoot.resolve(ToolchainPaths.INSTANCE_CONFIG_ROOT_NAME);
 
 		return new FabricLaunchPaths(
+				kind,
 				environment,
 				platformId,
 				platform.displayName(),
@@ -274,9 +500,9 @@ public final class FabricDevLaunchService
 				configDirectory.resolve("log4j2-intellij.xml"),
 				instanceRoot.resolve("launch.json"),
 				ToolchainPaths.INTELLIJ_FABRIC_LAUNCH_MODULE_DIRECTORY
-						.resolve(IntelliJModuleNames.fabricLaunchModuleFileName(projectName, environment.id(), platformId)),
+						.resolve(IntelliJModuleNames.fabricLaunchModuleFileName(projectName, kind, environment, platformId)),
 				ToolchainPaths.INTELLIJ_RUN_CONFIGS_DIRECTORY
-						.resolve(IntelliJModuleNames.fabricRunConfigurationFileName(environment.id(), platformId))
+						.resolve(IntelliJModuleNames.fabricRunConfigurationFileName(kind, environment, platformId))
 		);
 	}
 
@@ -300,6 +526,13 @@ public final class FabricDevLaunchService
 	{
 		Files.createDirectories(launchPaths.configDirectory());
 		Files.createDirectories(launchPaths.instanceRoot());
+
+		if (launchPaths.kind().includesGameTests())
+		{
+			Files.createDirectories(launchPaths.gameDirectory());
+			Files.createDirectories(launchPaths.resultsDirectory());
+		}
+
 		FabricLaunchSupport.writeLoggingConfig(vanillaLaunch, launchPaths.loggingConfigPath());
 		if (environment.isClient())
 		{
@@ -322,6 +555,7 @@ public final class FabricDevLaunchService
 	 * @param runtimeArtifacts the resolved Fabric runtime artifacts
 	 * @param moduleInjection  the resolved module injection contract
 	 * @param launchPaths      the generated launch path layout
+	 * @param request          the launch request
 	 *
 	 * @return the final JVM argument list
 	 */
@@ -330,7 +564,7 @@ public final class FabricDevLaunchService
 			FabricRuntimeArtifacts runtimeArtifacts,
 			FabricModuleInjection moduleInjection,
 			FabricLaunchPaths launchPaths,
-			LaunchEnvironment environment
+			FabricLaunchRequest request
 	)
 	{
 		List<String> jvmArgs = new ArrayList<>(vanillaLaunch.jvmArgs());
@@ -342,10 +576,64 @@ public final class FabricDevLaunchService
 		);
 		FabricLaunchSupport.replaceClasspath(jvmArgs, prependedClasspath);
 		FabricLaunchSupport.replaceLoggingConfiguration(jvmArgs, launchPaths.loggingConfigPath(), DEFAULT_ANSI_LOGGING_ENABLED);
-		addFabricRuntimeProperties(jvmArgs, runtimeArtifacts, launchPaths, environment);
+		addFabricRuntimeProperties(jvmArgs, runtimeArtifacts, launchPaths, request.environment());
+
+		if (request.kind().includesGameTests())
+		{
+			addGameTestRuntimeProperties(jvmArgs, launchPaths, request);
+		}
+
 		FabricLaunchSupport.addHostCompatibilityFlags(jvmArgs);
 		FabricLaunchSupport.addMixinJavaAgent(jvmArgs, runtimeArtifacts);
 		return jvmArgs;
+	}
+
+	/**
+	 * Adds the system properties that switch Fabric into its GameTest runners.
+	 *
+	 * <p>The server environment becomes Minecraft's headless GameTest server writing a JUnit XML report;
+	 * the client environment becomes Fabric's client GameTest runner. Selecting tests and recording
+	 * screenshot templates are opt-in, so an ordinary launch never filters or rewrites anything silently.
+	 *
+	 * @param jvmArgs     the JVM argument list
+	 * @param launchPaths the generated launch path layout
+	 * @param request     the GameTest launch request
+	 */
+	private void addGameTestRuntimeProperties(
+			List<String> jvmArgs,
+			FabricLaunchPaths launchPaths,
+			FabricLaunchRequest request
+	)
+	{
+		var options = request.gameTest();
+		var resultsDirectory = launchPaths.resultsDirectory().toAbsolutePath();
+
+		jvmArgs.add(GAMETEST_RESULTS_DIRECTORY_PROPERTY + "=" + resultsDirectory);
+
+		if (request.environment().isServer())
+		{
+			jvmArgs.add(FABRIC_SERVER_GAMETEST_PROPERTY);
+			jvmArgs.add(FABRIC_SERVER_GAMETEST_REPORT_PROPERTY + "=" + resultsDirectory.resolve(SERVER_REPORT_FILE_NAME));
+
+			if (options.serverFilter() != null && !options.serverFilter().isBlank())
+			{
+				jvmArgs.add(FABRIC_SERVER_GAMETEST_FILTER_PROPERTY + "=" + options.serverFilter());
+			}
+
+			return;
+		}
+
+		jvmArgs.add(FABRIC_CLIENT_GAMETEST_PROPERTY);
+
+		if (!options.clientModIds().isEmpty())
+		{
+			jvmArgs.add(FABRIC_CLIENT_GAMETEST_MOD_ID_PROPERTY + "=" + String.join(",", options.clientModIds()));
+		}
+
+		if (options.recordedTemplatesRoot() != null)
+		{
+			jvmArgs.add(FABRIC_CLIENT_GAMETEST_TEMPLATES_PROPERTY + "=" + options.recordedTemplatesRoot().toAbsolutePath());
+		}
 	}
 
 	/**
@@ -509,6 +797,8 @@ public final class FabricDevLaunchService
 	/**
 	 * Derived path layout for a generated Fabric launch bundle.
 	 *
+	 * @param kind                     the launch kind
+	 * @param environment              the launch environment
 	 * @param platformId               the current platform identifier
 	 * @param platformDisplayName      the current platform display name
 	 * @param instanceRoot             the Fabric instance root
@@ -519,6 +809,7 @@ public final class FabricDevLaunchService
 	 * @param ideaRunConfigurationPath the generated IntelliJ run configuration path
 	 */
 	private record FabricLaunchPaths(
+			LaunchKind kind,
 			LaunchEnvironment environment,
 			String platformId,
 			String platformDisplayName,
@@ -538,6 +829,26 @@ public final class FabricDevLaunchService
 		public Path configDirectory()
 		{
 			return launchConfigPath.getParent();
+		}
+
+		/**
+		 * Gets the instance's game directory, which is also the launch working directory.
+		 *
+		 * @return the game directory
+		 */
+		public Path gameDirectory()
+		{
+			return instanceRoot.resolve(ToolchainPaths.INSTANCE_GAME_ROOT_NAME);
+		}
+
+		/**
+		 * Gets the directory that receives GameTest reports, logs and diagnostics.
+		 *
+		 * @return the results directory
+		 */
+		public Path resultsDirectory()
+		{
+			return instanceRoot.resolve(ToolchainPaths.INSTANCE_RESULTS_ROOT_NAME);
 		}
 	}
 
@@ -559,22 +870,25 @@ public final class FabricDevLaunchService
 	}
 
 	/**
-	 * Resolves the IntelliJ output roots for an injected module.
+	 * Resolves the compiled output roots for an injected module.
 	 *
-	 * @param module the module specification
+	 * @param request     the launch request that selects the output tree and environment
+	 * @param projectName the IntelliJ project name
+	 * @param module      the module specification
 	 *
 	 * @return the ordered output roots
 	 */
 	private List<Path> resolveOutputRoots(
+			FabricLaunchRequest request,
 			String projectName,
-			ModuleSpec module,
-			LaunchEnvironment environment
+			ModuleSpec module
 	)
 	{
 		return FabricModuleOutputResolver.resolveOutputRoots(
+				request.outputRoot(),
 				projectName,
 				module,
-				environment.isClient(),
+				request.environment().isClient(),
 				"fabric",
 				true
 		);
@@ -599,7 +913,11 @@ public final class FabricDevLaunchService
 	) throws IOException
 	{
 		var runtimeClasspath = IntelliJRunConfigurationSupport.effectiveRuntimeClasspath(fabricLaunch);
-		var generatedPrefix = "fabric-launch-" + launchPaths.environment().id() + "-" + launchPaths.platformId() + "-";
+		var generatedPrefix = IntelliJModuleNames.fabricLaunchLibraryPrefix(
+				launchPaths.kind(),
+				launchPaths.environment(),
+				launchPaths.platformId()
+		);
 		IntelliJRunConfigurationSupport.writeLaunchLibraries(
 				generatedPrefix,
 				runtimeClasspath,
@@ -612,7 +930,7 @@ public final class FabricDevLaunchService
 				launchPaths.ideaLaunchModulePath(),
 				IntelliJRunConfigurationSupport.createLaunchModuleDocument(
 						launchPaths.instanceRoot(),
-						launchDependencyModuleNames(repository, moduleInjection, launchPaths.environment()),
+						launchDependencyModuleNames(repository, moduleInjection, launchPaths.kind(), launchPaths.environment()),
 						runtimeClasspath,
 						entry -> generatedPrefix + entry.getFileName()
 				)
@@ -621,7 +939,8 @@ public final class FabricDevLaunchService
 				"$PROJECT_DIR$/.idea/modules/launch/fabric/"
 				+ IntelliJModuleNames.fabricLaunchModuleFileName(
 						repository.projectName(),
-						launchPaths.environment().id(),
+						launchPaths.kind(),
+						launchPaths.environment(),
 						launchPaths.platformId()
 				)
 		);
@@ -634,14 +953,20 @@ public final class FabricDevLaunchService
 	 * `Make` step rebuilds outputs before launch, without letting those modules leak their
 	 * compile-only classpaths into the actual direct-DLI runtime.
 	 *
+	 * <p>A GameTest launch also depends on the GameTest source-set modules of every GameTest-enabled
+	 * module in the closure, so the tests are rebuilt along with the code under test.
+	 *
 	 * @param repository      the discovered repository context
 	 * @param moduleInjection the resolved injected module contract
+	 * @param kind            the launch kind
+	 * @param environment     the launch environment
 	 *
 	 * @return the ordered module dependency names
 	 */
 	private List<String> launchDependencyModuleNames(
 			RepositoryContext repository,
 			FabricModuleInjection moduleInjection,
+			LaunchKind kind,
 			LaunchEnvironment environment
 	)
 	{
@@ -663,7 +988,41 @@ public final class FabricDevLaunchService
 			}
 		}
 
+		if (kind.includesGameTests())
+		{
+			addGameTestLaunchDependencyModuleNames(repository, moduleInjection.moduleId(), environment, moduleNames);
+		}
+
 		return moduleNames;
+	}
+
+	/**
+	 * Adds the GameTest source-set modules that a GameTest launch must rebuild before it runs.
+	 *
+	 * @param repository  the discovered repository context
+	 * @param moduleId    the launch root module identifier
+	 * @param environment the launch environment
+	 * @param moduleNames the accumulated module dependency names
+	 */
+	private void addGameTestLaunchDependencyModuleNames(
+			RepositoryContext repository,
+			String moduleId,
+			LaunchEnvironment environment,
+			List<String> moduleNames
+	)
+	{
+		for (var module : GameTestModuleResolver.launchModules(repository.buildGraph(), moduleId))
+		{
+			if (SourceSetLayout.hasGameTestSourceSet(module))
+			{
+				moduleNames.add(IntelliJModuleNames.sourceSetModuleName(repository.projectName(), module.id(), SourceSetNames.GAMETEST));
+			}
+
+			if (environment.isClient() && SourceSetLayout.hasGameTestClientSourceSet(module))
+			{
+				moduleNames.add(IntelliJModuleNames.sourceSetModuleName(repository.projectName(), module.id(), SourceSetNames.GAMETEST_CLIENT));
+			}
+		}
 	}
 
 	/**
@@ -688,9 +1047,9 @@ public final class FabricDevLaunchService
 	) throws IOException
 	{
 		Map<String, String> values = new LinkedHashMap<>();
-		values.put("CONFIG_NAME", "Fabric " + launchPaths.environment().displayName() + " (" + platformDisplayName + ")");
+		values.put("CONFIG_NAME", launchPaths.kind().displayPrefix() + " " + launchPaths.environment().displayName() + " (" + platformDisplayName + ")");
 		values.put("MAIN_CLASS_NAME", DEV_LAUNCH_MAIN_CLASS);
-		values.put("MODULE_NAME", IntelliJModuleNames.fabricLaunchModuleName(repository.projectName(), launchPaths.environment().id(), launchPaths.platformId()));
+		values.put("MODULE_NAME", IntelliJModuleNames.fabricLaunchModuleName(repository.projectName(), launchPaths.kind(), launchPaths.environment(), launchPaths.platformId()));
 		values.put("PROGRAM_PARAMETERS", IntelliJRunConfigurationSupport.renderIdeaArguments(fabricLaunch.gameArgs()));
 		values.put("VM_PARAMETERS", IntelliJRunConfigurationSupport.renderIdeaArguments(IntelliJRunConfigurationSupport.ideaVmArguments(fabricLaunch.jvmArgs())));
 		values.put("WORKING_DIRECTORY", IntelliJRunConfigurationSupport.xmlPath(fabricLaunch.workingDirectory()));

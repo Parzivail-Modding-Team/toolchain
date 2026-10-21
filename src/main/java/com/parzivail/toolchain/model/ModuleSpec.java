@@ -48,9 +48,34 @@ public final class ModuleSpec
 	private final List<Path> _clientResources;
 
 	/**
+	 * The common/server GameTest Java source roots.
+	 */
+	private final List<Path> _gametestSources;
+
+	/**
+	 * The client GameTest Java source roots.
+	 */
+	private final List<Path> _gametestClientSources;
+
+	/**
+	 * The common/server GameTest resource roots.
+	 */
+	private final List<Path> _gametestResources;
+
+	/**
+	 * The client GameTest resource roots.
+	 */
+	private final List<Path> _gametestClientResources;
+
+	/**
 	 * The declared logical module dependencies.
 	 */
 	private final List<String> _dependencies;
+
+	/**
+	 * The modules whose GameTest source sets are visible to this module's GameTest source sets.
+	 */
+	private final List<String> _gametestDependencies;
 
 	/**
 	 * The declared aggregate module members.
@@ -94,6 +119,16 @@ public final class ModuleSpec
 	private final List<MavenDependencySpec> _clientDependencies;
 
 	/**
+	 * The declared external Maven dependencies of the GameTest source sets, for example Fabric's GameTest API.
+	 */
+	private final List<MavenDependencySpec> _gametestCompileDependencies;
+
+	/**
+	 * The declared external Maven dependencies of the client GameTest source set only.
+	 */
+	private final List<MavenDependencySpec> _gametestClientDependencies;
+
+	/**
 	 * The declared external annotation processor Maven dependencies.
 	 */
 	private final List<MavenDependencySpec> _annotationProcessorDependencies;
@@ -107,6 +142,11 @@ public final class ModuleSpec
 	 * The optional Fabric mod descriptor path.
 	 */
 	private Path _fabricModJson;
+
+	/**
+	 * The optional test-only Fabric mod descriptor path shipped by the GameTest source sets.
+	 */
+	private Path _gametestFabricModJson;
 
 	/**
 	 * The optional Fabric mod identifier exposed by this module.
@@ -142,7 +182,12 @@ public final class ModuleSpec
 		_clientSources = new ArrayList<>();
 		_mainResources = new ArrayList<>();
 		_clientResources = new ArrayList<>();
+		_gametestSources = new ArrayList<>();
+		_gametestClientSources = new ArrayList<>();
+		_gametestResources = new ArrayList<>();
+		_gametestClientResources = new ArrayList<>();
 		_dependencies = new ArrayList<>();
+		_gametestDependencies = new ArrayList<>();
 		_aggregateMembers = new ArrayList<>();
 		_annotationProcessors = new ArrayList<>();
 		_providedAnnotationProcessorClasses = new ArrayList<>();
@@ -151,6 +196,8 @@ public final class ModuleSpec
 		_mixins = new ArrayList<>();
 		_compileDependencies = new ArrayList<>();
 		_clientDependencies = new ArrayList<>();
+		_gametestCompileDependencies = new ArrayList<>();
+		_gametestClientDependencies = new ArrayList<>();
 		_annotationProcessorDependencies = new ArrayList<>();
 		_runtimeDependencies = new ArrayList<>();
 		_artifactExcludes = new ArrayList<>();
@@ -227,6 +274,46 @@ public final class ModuleSpec
 	}
 
 	/**
+	 * Gets the common/server GameTest Java source roots.
+	 *
+	 * @return the immutable GameTest source roots
+	 */
+	public List<Path> gametestSources()
+	{
+		return List.copyOf(_gametestSources);
+	}
+
+	/**
+	 * Gets the client GameTest Java source roots.
+	 *
+	 * @return the immutable client GameTest source roots
+	 */
+	public List<Path> gametestClientSources()
+	{
+		return List.copyOf(_gametestClientSources);
+	}
+
+	/**
+	 * Gets the common/server GameTest resource roots.
+	 *
+	 * @return the immutable GameTest resource roots
+	 */
+	public List<Path> gametestResources()
+	{
+		return List.copyOf(_gametestResources);
+	}
+
+	/**
+	 * Gets the client GameTest resource roots.
+	 *
+	 * @return the immutable client GameTest resource roots
+	 */
+	public List<Path> gametestClientResources()
+	{
+		return List.copyOf(_gametestClientResources);
+	}
+
+	/**
 	 * Gets the declared logical dependencies.
 	 *
 	 * @return the immutable dependency identifiers
@@ -234,6 +321,16 @@ public final class ModuleSpec
 	public List<String> dependencies()
 	{
 		return List.copyOf(_dependencies);
+	}
+
+	/**
+	 * Gets the modules whose GameTest source sets are visible to this module's GameTest source sets.
+	 *
+	 * @return the immutable GameTest dependency identifiers
+	 */
+	public List<String> gametestDependencies()
+	{
+		return List.copyOf(_gametestDependencies);
 	}
 
 	/**
@@ -327,6 +424,29 @@ public final class ModuleSpec
 	}
 
 	/**
+	 * Gets the declared external Maven dependencies of the GameTest source sets.
+	 *
+	 * <p>They are visible to the common and client GameTest source sets and are on the classpath of every
+	 * GameTest launch that includes this module's tests.
+	 *
+	 * @return the immutable GameTest Maven dependencies
+	 */
+	public List<MavenDependencySpec> gametestCompileDependencies()
+	{
+		return List.copyOf(_gametestCompileDependencies);
+	}
+
+	/**
+	 * Gets the declared external Maven dependencies of the client GameTest source set only.
+	 *
+	 * @return the immutable client GameTest Maven dependencies
+	 */
+	public List<MavenDependencySpec> gametestClientDependencies()
+	{
+		return List.copyOf(_gametestClientDependencies);
+	}
+
+	/**
 	 * Gets the declared external annotation processor Maven dependencies.
 	 *
 	 * @return the immutable annotation processor Maven dependencies
@@ -344,6 +464,19 @@ public final class ModuleSpec
 	public Path fabricModJson()
 	{
 		return _fabricModJson;
+	}
+
+	/**
+	 * Gets the optional test-only Fabric mod descriptor path.
+	 *
+	 * <p>The descriptor declares the {@code fabric-gametest} and {@code fabric-client-gametest}
+	 * entrypoints and is only ever loaded by GameTest launches.
+	 *
+	 * @return the descriptor path, or {@code null} when the module has no GameTest source sets
+	 */
+	public Path gametestFabricModJson()
+	{
+		return _gametestFabricModJson;
 	}
 
 	/**
@@ -453,6 +586,71 @@ public final class ModuleSpec
 	public ModuleSpec clientResources(Path path)
 	{
 		_clientResources.add(path);
+		return this;
+	}
+
+	/**
+	 * Adds a common/server GameTest Java source root.
+	 *
+	 * @param path the source root
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestSources(Path path)
+	{
+		_gametestSources.add(path);
+		return this;
+	}
+
+	/**
+	 * Adds a client GameTest Java source root.
+	 *
+	 * @param path the source root
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestClientSources(Path path)
+	{
+		_gametestClientSources.add(path);
+		return this;
+	}
+
+	/**
+	 * Adds a common/server GameTest resource root.
+	 *
+	 * @param path the resource root
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestResources(Path path)
+	{
+		_gametestResources.add(path);
+		return this;
+	}
+
+	/**
+	 * Adds a client GameTest resource root.
+	 *
+	 * @param path the resource root
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestClientResources(Path path)
+	{
+		_gametestClientResources.add(path);
+		return this;
+	}
+
+	/**
+	 * Adds a module whose GameTest source sets this module's GameTest source sets may use.
+	 *
+	 * @param dependencyId the module identifier
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestDependency(String dependencyId)
+	{
+		_gametestDependencies.add(dependencyId);
 		return this;
 	}
 
@@ -580,6 +778,34 @@ public final class ModuleSpec
 	}
 
 	/**
+	 * Declares an external Maven dependency of the GameTest source sets.
+	 *
+	 * @param notation   the dependency coordinate notation
+	 * @param repository the repository that serves the dependency
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestCompileDependency(String notation, URI repository)
+	{
+		_gametestCompileDependencies.add(new MavenDependencySpec(notation, repository));
+		return this;
+	}
+
+	/**
+	 * Declares an external Maven dependency of the client GameTest source set only.
+	 *
+	 * @param notation   the dependency coordinate notation
+	 * @param repository the repository that serves the dependency
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestClientDependency(String notation, URI repository)
+	{
+		_gametestClientDependencies.add(new MavenDependencySpec(notation, repository));
+		return this;
+	}
+
+	/**
 	 * Declares an external annotation processor Maven dependency.
 	 *
 	 * @param notation   the dependency coordinate notation
@@ -617,6 +843,19 @@ public final class ModuleSpec
 	public ModuleSpec fabricModJson(Path path)
 	{
 		_fabricModJson = path;
+		return this;
+	}
+
+	/**
+	 * Declares the test-only Fabric mod descriptor path.
+	 *
+	 * @param path the descriptor path
+	 *
+	 * @return this module specification
+	 */
+	public ModuleSpec gametestFabricModJson(Path path)
+	{
+		_gametestFabricModJson = path;
 		return this;
 	}
 

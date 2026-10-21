@@ -4,8 +4,10 @@ import com.parzivail.toolchain.fabric.FabricRuntimeResolver;
 import com.parzivail.toolchain.fabric.MavenArtifactResolver;
 import com.parzivail.toolchain.fabric.MavenCoordinate;
 import com.parzivail.toolchain.model.BuildGraph;
+import com.parzivail.toolchain.model.GameTestModuleResolver;
 import com.parzivail.toolchain.model.MavenDependencySpec;
 import com.parzivail.toolchain.model.ModuleSpec;
+import com.parzivail.toolchain.model.SourceSetLayout;
 import com.parzivail.toolchain.model.SourceSetNames;
 import com.parzivail.toolchain.mojang.MojangMetadataClient;
 import com.parzivail.toolchain.path.ToolchainPaths;
@@ -200,6 +202,67 @@ public final class IntelliJDependencyResolver
 	}
 
 	/**
+	 * Resolves the full IntelliJ-visible library set for a GameTest source set of one module.
+	 *
+	 * <p>That is everything the module's production source set of the same environment sees, plus the
+	 * GameTest Maven dependencies of the module and of every module whose GameTest source sets it can
+	 * use, so a shared test harness can declare Fabric's GameTest API once.
+	 *
+	 * @param graph             the authoritative build graph
+	 * @param loaderVersion     the Fabric loader version
+	 * @param refresh           whether to refresh external artifact resolution
+	 * @param module            the module specification
+	 * @param clientEnvironment whether the client GameTest source set is being resolved
+	 *
+	 * @return the ordered IntelliJ-visible library artifacts
+	 *
+	 * @throws IOException if dependency resolution fails
+	 */
+	public Set<Path> resolveGameTestLibraries(
+			BuildGraph graph,
+			String loaderVersion,
+			boolean refresh,
+			ModuleSpec module,
+			boolean clientEnvironment
+	) throws IOException
+	{
+		Set<Path> libraries = new LinkedHashSet<>(
+				resolveModuleLibraries(graph, loaderVersion, refresh, module, clientEnvironment)
+		);
+
+		for (var testModule : gameTestLibraryOwners(graph, module))
+		{
+			libraries.addAll(expandIntelliJLibraryArtifacts(
+					resolveExternalDependencies(testModule.gametestCompileDependencies(), refresh)
+			));
+
+			if (clientEnvironment)
+			{
+				libraries.addAll(expandIntelliJLibraryArtifacts(
+						resolveExternalDependencies(testModule.gametestClientDependencies(), refresh)
+				));
+			}
+		}
+
+		return libraries;
+	}
+
+	/**
+	 * Lists the modules whose GameTest Maven dependencies apply to one module's GameTest source sets.
+	 *
+	 * @param graph  the authoritative build graph
+	 * @param module the module whose GameTest source sets are being resolved
+	 *
+	 * @return the module's GameTest dependencies, dependencies first, followed by the module itself
+	 */
+	private List<ModuleSpec> gameTestLibraryOwners(BuildGraph graph, ModuleSpec module)
+	{
+		List<ModuleSpec> owners = new ArrayList<>(GameTestModuleResolver.gameTestDependencies(graph, module));
+		owners.add(module);
+		return owners;
+	}
+
+	/**
 	 * Resolves all project library artifacts implied by the current graph.
 	 *
 	 * @param graph         the authoritative build graph
@@ -223,6 +286,16 @@ public final class IntelliJDependencyResolver
 			ToolchainLog.info("idea", "Resolving libraries for module " + module.id());
 			resolvedArtifacts.addAll(resolveModuleLibraries(graph, loaderVersion, refresh, module, false));
 			resolvedArtifacts.addAll(resolveModuleLibraries(graph, loaderVersion, refresh, module, true));
+
+			if (SourceSetLayout.hasGameTestSourceSet(module))
+			{
+				resolvedArtifacts.addAll(resolveGameTestLibraries(graph, loaderVersion, refresh, module, false));
+			}
+
+			if (SourceSetLayout.hasGameTestClientSourceSet(module))
+			{
+				resolvedArtifacts.addAll(resolveGameTestLibraries(graph, loaderVersion, refresh, module, true));
+			}
 		}
 
 		return resolvedArtifacts;

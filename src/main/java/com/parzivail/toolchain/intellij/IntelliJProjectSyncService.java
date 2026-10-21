@@ -209,6 +209,13 @@ public final class IntelliJProjectSyncService
 				expectedModuleFiles.add(module.id() + "/" + IntelliJModuleNames.sourceSetModuleFileName(projectName, module.id(), SourceSetNames.CLIENT));
 				writeSourceSetModuleMetadata(projectName, graph, loaderVersion, refresh, module, SourceSetNames.CLIENT);
 			}
+
+			for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+			{
+				ToolchainLog.info("idea", "Writing " + gameTestSourceSet + " source set metadata for " + module.id());
+				expectedModuleFiles.add(module.id() + "/" + IntelliJModuleNames.sourceSetModuleFileName(projectName, module.id(), gameTestSourceSet));
+				writeSourceSetModuleMetadata(projectName, graph, loaderVersion, refresh, module, gameTestSourceSet);
+			}
 		}
 
 		deleteObsoleteGeneratedProjectModuleFiles(expectedModuleFiles);
@@ -318,6 +325,8 @@ public final class IntelliJProjectSyncService
 			}
 		}
 
+		addGameTestAnnotationProfile(annotationProcessing, projectName, graph);
+
 		compilerConfiguration.addElement("bytecodeTargetLevel")
 		                     .addAttribute("target", Integer.toString(graph.modules().stream().mapToInt(ModuleSpec::javaVersion).max().orElse(25)));
 		var javacSettings = project.addElement("component");
@@ -386,6 +395,43 @@ public final class IntelliJProjectSyncService
 	}
 
 	/**
+	 * Adds one profile that disables annotation processing for every GameTest source set.
+	 *
+	 * <p>GameTest source sets never own generated roots, so an unexpected processor discovered on their
+	 * classpath must not generate duplicate sources next to the main and client source sets.
+	 *
+	 * @param annotationProcessing the annotation processing element
+	 * @param projectName          the IntelliJ project name
+	 * @param graph                the authoritative build graph
+	 */
+	private void addGameTestAnnotationProfile(Element annotationProcessing, String projectName, BuildGraph graph)
+	{
+		List<String> gameTestModuleNames = new ArrayList<>();
+
+		for (var module : graph.modules())
+		{
+			for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+			{
+				gameTestModuleNames.add(IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), gameTestSourceSet));
+			}
+		}
+
+		if (gameTestModuleNames.isEmpty())
+		{
+			return;
+		}
+
+		var profile = annotationProcessing.addElement("profile");
+		profile.addAttribute("name", "Toolchain: GameTest source sets");
+		profile.addAttribute("enabled", "false");
+
+		for (var gameTestModuleName : gameTestModuleNames)
+		{
+			profile.addElement("module").addAttribute("name", gameTestModuleName);
+		}
+	}
+
+	/**
 	 * Collects the explicit annotation processor classes contributed by module-backed processor
 	 * dependencies.
 	 *
@@ -444,6 +490,13 @@ public final class IntelliJProjectSyncService
 			{
 				additionalOptions.addElement("module")
 				                 .addAttribute("name", IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), SourceSetNames.CLIENT))
+				                 .addAttribute("options", "-Xmaxerrs 1000 -Xdiags:verbose");
+			}
+
+			for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+			{
+				additionalOptions.addElement("module")
+				                 .addAttribute("name", IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), gameTestSourceSet))
 				                 .addAttribute("options", "-Xmaxerrs 1000 -Xdiags:verbose");
 			}
 		}
@@ -608,6 +661,14 @@ public final class IntelliJProjectSyncService
 						"$PROJECT_DIR$/.idea/modules/projects/" + module.id() + "/" + IntelliJModuleNames.sourceSetModuleFileName(projectName, module.id(), SourceSetNames.CLIENT)
 				);
 			}
+
+			for (var gameTestSourceSet : SourceSetLayout.gameTestSourceSets(module))
+			{
+				addRegisteredModule(
+						modules,
+						"$PROJECT_DIR$/.idea/modules/projects/" + module.id() + "/" + IntelliJModuleNames.sourceSetModuleFileName(projectName, module.id(), gameTestSourceSet)
+				);
+			}
 		}
 
 		for (var preservedModulePath : preservedGeneratedLaunchModules())
@@ -647,7 +708,10 @@ public final class IntelliJProjectSyncService
 		addRootManager(moduleElement, projectName, graph, loaderVersion, refresh, module, sourceSetName);
 		addGeneratedSourcesComponent(moduleElement, module, generatedRoots(module, sourceSetName));
 
-		addFabricFacetComponents(moduleElement, module, graph.minecraftVersion());
+		if (!SourceSetNames.isGameTest(sourceSetName))
+		{
+			addFabricFacetComponents(moduleElement, module, graph.minecraftVersion());
+		}
 
 		return document;
 	}
@@ -807,12 +871,23 @@ public final class IntelliJProjectSyncService
 			dependencyModuleNames.add(IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), SourceSetNames.MAIN));
 		}
 
+		if (SourceSetNames.isGameTest(sourceSetName))
+		{
+			dependencyModuleNames.addAll(gameTestDependencyModuleNames(projectName, graph, module, sourceSetName));
+		}
+
 		for (var dependencyModuleName : dependencyModuleNames)
 		{
 			rootManager.addElement("orderEntry")
 			           .addAttribute("type", "module")
 			           .addAttribute("module-name", dependencyModuleName)
 			           .addAttribute("exported", "");
+		}
+
+		if (SourceSetNames.isGameTest(sourceSetName))
+		{
+			// GameTest source sets are compiled without annotation processing.
+			return;
 		}
 
 		for (var processorId : module.annotationProcessors())
@@ -822,6 +897,60 @@ public final class IntelliJProjectSyncService
 			           .addAttribute("module-name", IntelliJModuleNames.sourceSetModuleName(projectName, processorId, SourceSetNames.MAIN))
 			           .addAttribute("scope", "PROVIDED");
 		}
+	}
+
+	/**
+	 * Resolves the extra module edges a GameTest source set needs on top of its production
+	 * dependencies.
+	 *
+	 * <p>A GameTest source set sees the same module's production source sets, the common GameTest
+	 * source set when it is the client one, and the GameTest source sets of every declared GameTest
+	 * dependency. The client GameTest source set additionally sees the client production source set and
+	 * the client GameTest source sets of its GameTest dependencies.
+	 *
+	 * @param projectName   the IntelliJ project name
+	 * @param graph         the authoritative build graph
+	 * @param module        the module specification
+	 * @param sourceSetName the GameTest source-set name
+	 *
+	 * @return the ordered extra module names
+	 */
+	private List<String> gameTestDependencyModuleNames(
+			String projectName,
+			BuildGraph graph,
+			ModuleSpec module,
+			String sourceSetName
+	)
+	{
+		var clientEnvironment = SourceSetNames.isClientEnvironment(sourceSetName);
+		List<String> names = new ArrayList<>();
+
+		names.add(IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), SourceSetNames.MAIN));
+
+		if (clientEnvironment && hasClientSourceSet(module))
+		{
+			names.add(IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), SourceSetNames.CLIENT));
+		}
+
+		if (SourceSetNames.GAMETEST_CLIENT.equals(sourceSetName) && SourceSetLayout.hasGameTestSourceSet(module))
+		{
+			names.add(IntelliJModuleNames.sourceSetModuleName(projectName, module.id(), SourceSetNames.GAMETEST));
+		}
+
+		for (var dependency : GameTestModuleResolver.gameTestDependencies(graph, module))
+		{
+			if (SourceSetLayout.hasGameTestSourceSet(dependency))
+			{
+				names.add(IntelliJModuleNames.sourceSetModuleName(projectName, dependency.id(), SourceSetNames.GAMETEST));
+			}
+
+			if (clientEnvironment && SourceSetLayout.hasGameTestClientSourceSet(dependency))
+			{
+				names.add(IntelliJModuleNames.sourceSetModuleName(projectName, dependency.id(), SourceSetNames.GAMETEST_CLIENT));
+			}
+		}
+
+		return names;
 	}
 
 	/**
@@ -845,13 +974,10 @@ public final class IntelliJProjectSyncService
 			String sourceSetName
 	) throws IOException
 	{
-		var dependencies = _dependencyResolver.resolveModuleLibraries(
-				graph,
-				loaderVersion,
-				refresh,
-				module,
-				SourceSetNames.CLIENT.equals(sourceSetName)
-		);
+		var clientEnvironment = SourceSetNames.isClientEnvironment(sourceSetName);
+		var dependencies = SourceSetNames.isGameTest(sourceSetName)
+		                   ? _dependencyResolver.resolveGameTestLibraries(graph, loaderVersion, refresh, module, clientEnvironment)
+		                   : _dependencyResolver.resolveModuleLibraries(graph, loaderVersion, refresh, module, clientEnvironment);
 
 		for (var dependency : dependencies)
 		{
@@ -859,6 +985,11 @@ public final class IntelliJProjectSyncService
 			           .addAttribute("type", "library")
 			           .addAttribute("name", projectLibraryName(dependency))
 			           .addAttribute("level", "project");
+		}
+
+		if (SourceSetNames.isGameTest(sourceSetName))
+		{
+			return;
 		}
 
 		for (var dependency : resolveAnnotationProcessorSupportLibraries(graph, refresh, module))

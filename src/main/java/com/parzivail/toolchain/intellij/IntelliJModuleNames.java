@@ -1,5 +1,8 @@
 package com.parzivail.toolchain.intellij;
 
+import com.parzivail.toolchain.runtime.LaunchEnvironment;
+import com.parzivail.toolchain.runtime.LaunchKind;
+
 import java.util.Locale;
 
 /**
@@ -68,6 +71,73 @@ public final class IntelliJModuleNames
 	public static String fabricLaunchModuleFileName(String projectName, String environmentId, String platformId)
 	{
 		return fabricLaunchModuleName(projectName, environmentId, platformId) + ".iml";
+	}
+
+	/**
+	 * Builds the IntelliJ module name for a generated Fabric launch classpath module of one launch kind.
+	 *
+	 * @param projectName the IntelliJ project name
+	 * @param kind        the launch kind
+	 * @param environment the launch environment
+	 * @param platformId  the target platform identifier
+	 *
+	 * @return the launch module name
+	 */
+	public static String fabricLaunchModuleName(String projectName, LaunchKind kind, LaunchEnvironment environment, String platformId)
+	{
+		return projectName + ".launch.fabric." + kind.scopedEnvironmentId(environment) + "." + platformId;
+	}
+
+	/**
+	 * Builds the IntelliJ module file name for a generated Fabric launch classpath module of one launch
+	 * kind.
+	 *
+	 * @param projectName the IntelliJ project name
+	 * @param kind        the launch kind
+	 * @param environment the launch environment
+	 * @param platformId  the target platform identifier
+	 *
+	 * @return the launch module file name
+	 */
+	public static String fabricLaunchModuleFileName(String projectName, LaunchKind kind, LaunchEnvironment environment, String platformId)
+	{
+		return fabricLaunchModuleName(projectName, kind, environment, platformId) + ".iml";
+	}
+
+	/**
+	 * Builds the generated IntelliJ Fabric run-configuration file name for one launch kind, environment
+	 * and platform.
+	 *
+	 * @param kind        the launch kind
+	 * @param environment the launch environment
+	 * @param platformId  the target platform identifier
+	 *
+	 * @return the run-configuration file name
+	 */
+	public static String fabricRunConfigurationFileName(LaunchKind kind, LaunchEnvironment environment, String platformId)
+	{
+		if (kind == LaunchKind.DEVELOPMENT)
+		{
+			return fabricRunConfigurationFileName(environment.id(), platformId);
+		}
+
+		return "Fabric_GameTest_" + environment.id().substring(0, 1).toUpperCase(Locale.ROOT)
+		       + environment.id().substring(1).toLowerCase(Locale.ROOT)
+		       + "_" + platformId.toUpperCase(Locale.ROOT) + ".xml";
+	}
+
+	/**
+	 * Builds the project-library name prefix of the generated launch libraries of one launch kind.
+	 *
+	 * @param kind        the launch kind
+	 * @param environment the launch environment
+	 * @param platformId  the target platform identifier
+	 *
+	 * @return the library name prefix, which ends with a dash
+	 */
+	public static String fabricLaunchLibraryPrefix(LaunchKind kind, LaunchEnvironment environment, String platformId)
+	{
+		return "fabric-launch-" + kind.scopedEnvironmentId(environment) + "-" + platformId + "-";
 	}
 
 	/**

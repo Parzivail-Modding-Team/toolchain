@@ -174,6 +174,70 @@ These are the fields you will use most often.
   `build/generated/sources/annotationProcessor/java/client`
 - A string or list overrides that path.
 
+## GameTest Source Sets
+
+A `fabric_split_sources` module may declare test-only GameTest source sets. They sit beside `main` and `client`
+and are compiled **separately**, so a server test cannot reference client-only code:
+
+| Source set | Roots | Compiled against |
+|---|---|---|
+| `gametest` | `src/gametest/java`, `src/gametest/resources` | the common/server Minecraft classes |
+| `gametest_client` | `src/gametest_client/java`, `src/gametest_client/resources` | the client Minecraft classes |
+
+`gametest` sees the module's `main` and the `gametest` source sets of its GameTest dependencies.
+`gametest_client` additionally sees the module's `client` and `gametest` source sets and the client GameTest
+source sets of its GameTest dependencies. Neither set runs annotation processing.
+
+`gametest`
+
+- Optional boolean.
+- `true` adds the conventional roots listed above.
+
+`gametest_sources`, `gametest_resources`, `gametest_client_sources`, `gametest_client_resources`
+
+- Optional path lists that add further roots, like their `main_*` and `client_*` counterparts.
+- A GameTest root may not overlap a `main` or `client` root.
+
+`gametest_dependencies`, `gametest_dependency`
+
+- Optional logical module dependencies whose GameTest source sets and GameTest libraries are visible to this
+  module's GameTest source sets.
+- Each entry must declare GameTest source sets itself and already be a module dependency, so its production code
+  is part of every launch that uses it. Cycles are rejected.
+
+`gametest_compile_dependencies`, `gametest_client_dependencies`
+
+- Optional external Maven dependencies, in the same syntax as `compile_dependencies`.
+- The first list is visible to both GameTest source sets and is on the classpath of every GameTest launch. The
+  second is only visible to `gametest_client` and only on the classpath of client GameTest launches.
+- They are inherited through `gametest_dependencies`, so a shared test harness declares Fabric's GameTest APIs once.
+  Fabric's GameTest APIs are separate artifacts and are not part of the `fabric-api` bundle.
+
+`gametest_fabric_mod_json`
+
+- Optional path of the test-only mod descriptor relative to the module root.
+- Default: `src/gametest/resources/fabric.mod.json`.
+- The descriptor declares the `fabric-gametest` and `fabric-client-gametest` entrypoints. A GameTest launch fails
+  when a module with GameTest source sets has none.
+
+```toml
+[modules.example_core]
+kind = "fabric_split_sources"
+gametest = true
+gametest_compile_dependencies = [
+	"net.fabricmc.fabric-api:fabric-gametest-api-v1:<version> @ fabric",
+]
+gametest_client_dependencies = [
+	"net.fabricmc.fabric-api:fabric-client-gametest-api-v1:<version> @ fabric",
+]
+
+[modules.example_weapons]
+kind = "fabric_split_sources"
+dependency = "example_core"
+gametest = true
+gametest_dependencies = ["example_core"]
+```
+
 ## External Dependency Syntax
 
 External Maven dependencies can be written in two ways.

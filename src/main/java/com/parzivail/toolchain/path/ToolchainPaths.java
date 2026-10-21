@@ -1,6 +1,7 @@
 package com.parzivail.toolchain.path;
 
 import com.parzivail.toolchain.runtime.LaunchEnvironment;
+import com.parzivail.toolchain.runtime.LaunchKind;
 import com.parzivail.toolchain.util.HostPlatform;
 import com.parzivail.toolchain.util.ToolchainLog;
 
@@ -92,6 +93,12 @@ public class ToolchainPaths
 	 * The output root used for game instance games.
 	 */
 	public static final String INSTANCE_GAME_ROOT_NAME = "game";
+
+	/**
+	 * The directory name, inside a GameTest instance root, that receives test reports, logs and
+	 * diagnostics.
+	 */
+	public static final String INSTANCE_RESULTS_ROOT_NAME = "results";
 
 	/**
 	 * The output root used for Fabric datagen instances.
@@ -224,9 +231,38 @@ public class ToolchainPaths
 	 */
 	public static Path getInstanceRoot(String versionId, LaunchEnvironment environment, HostPlatform platform)
 	{
-		return INSTANCE_ROOT.resolve(environment.fabricInstanceDirectoryName())
+		return getInstanceRoot(versionId, LaunchKind.DEVELOPMENT, environment, platform);
+	}
+
+	/**
+	 * Gets the instance root for the given launch kind, environment and platform.
+	 *
+	 * @param versionId   the Minecraft version identifier
+	 * @param kind        the launch kind
+	 * @param environment the launch environment
+	 * @param platform    the target platform identifier
+	 *
+	 * @return the instance root
+	 */
+	public static Path getInstanceRoot(String versionId, LaunchKind kind, LaunchEnvironment environment, HostPlatform platform)
+	{
+		return INSTANCE_ROOT.resolve(kind.instanceDirectoryName(environment))
 		                    .resolve(platform.id())
 		                    .resolve(versionId);
+	}
+
+	/**
+	 * Gets the directory that receives the reports, logs and diagnostics of GameTest runs.
+	 *
+	 * @param versionId   the Minecraft version identifier
+	 * @param environment the launch environment
+	 * @param platform    the target platform identifier
+	 *
+	 * @return the results directory, which sits beside the instance's game directory
+	 */
+	public static Path getGameTestResultsDirectory(String versionId, LaunchEnvironment environment, HostPlatform platform)
+	{
+		return getInstanceRoot(versionId, LaunchKind.GAMETEST, environment, platform).resolve(INSTANCE_RESULTS_ROOT_NAME);
 	}
 
 	/**

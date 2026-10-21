@@ -3,6 +3,7 @@ package com.parzivail.toolchain.config;
 import com.parzivail.toolchain.maven.ToolchainMavenCoordinates;
 import com.parzivail.toolchain.maven.ToolchainMavenRepositories;
 import com.parzivail.toolchain.model.ModuleSpec;
+import com.parzivail.toolchain.model.SourceSetLayout;
 import com.parzivail.toolchain.path.ModulePaths;
 import com.parzivail.toolchain.path.ToolchainPaths;
 import io.github.wasabithumb.jtoml.JToml;
@@ -15,7 +16,12 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Loads the host project's text-backed toolchain configuration.
@@ -198,6 +204,7 @@ public final class ToolchainProjectConfigLoader
 		}
 
 		applyOptionalDatagenOutput(table, spec);
+		applyGameTestConfiguration(table, spec, kind);
 
 		if (!spec.annotationProcessors().isEmpty() && spec.generatedSources().isEmpty())
 		{
@@ -212,6 +219,72 @@ public final class ToolchainProjectConfigLoader
 		}
 
 		return spec;
+	}
+
+	/**
+	 * Applies the optional GameTest source-set declarations of one module.
+	 *
+	 * <p>{@code gametest = true} adds the conventional common and client GameTest roots, and the
+	 * explicit {@code gametest_*} path lists add further roots the same way their main and client
+	 * counterparts do. The common set is compiled against the common Minecraft classes and the client
+	 * set against the client classes, so a server test cannot reference client-only code.
+	 *
+	 * @param table the owning module table
+	 * @param spec  the mutable module specification
+	 * @param kind  the configured module kind
+	 */
+	private void applyGameTestConfiguration(TomlTable table, ModuleSpec spec, ConfiguredModuleKind kind)
+	{
+		var gameTest = table.get("gametest");
+
+		if (gameTest != null && isBooleanTrue(gameTest))
+		{
+			spec.gametestSources(spec.paths().gametestJava());
+			spec.gametestResources(spec.paths().gametestResources());
+			spec.gametestClientSources(spec.paths().gametestClientJava());
+			spec.gametestClientResources(spec.paths().gametestClientResources());
+		}
+
+		applyOptionalPathList(table, "gametest_sources", spec::gametestSources);
+		applyOptionalPathList(table, "gametest_resources", spec::gametestResources);
+		applyOptionalPathList(table, "gametest_client_sources", spec::gametestClientSources);
+		applyOptionalPathList(table, "gametest_client_resources", spec::gametestClientResources);
+		applyOptionalStringList(table, "gametest_dependencies", spec::gametestDependency);
+		applyOptionalString(table, "gametest_dependency", spec::gametestDependency);
+		applyOptionalDependencyList(table, "gametest_compile_dependencies", spec::gametestCompileDependency);
+		applyOptionalDependencyList(table, "gametest_client_dependencies", spec::gametestClientDependency);
+
+		if (!SourceSetLayout.hasGameTests(spec))
+		{
+			if (!spec.gametestDependencies().isEmpty()
+			    || !spec.gametestCompileDependencies().isEmpty()
+			    || !spec.gametestClientDependencies().isEmpty())
+			{
+				throw new IllegalArgumentException(
+						"Module '" + spec.id() + "' declares GameTest dependencies but no GameTest source sets"
+				);
+			}
+
+			return;
+		}
+
+		if (kind != ConfiguredModuleKind.FABRIC_SPLIT_SOURCES)
+		{
+			throw new IllegalArgumentException(
+					"Module '" + spec.id() + "' declares GameTest source sets but is not a fabric_split_sources module"
+			);
+		}
+
+		var fabricModJson = optionalString(table, "gametest_fabric_mod_json");
+
+		if (fabricModJson != null && !fabricModJson.isBlank())
+		{
+			spec.gametestFabricModJson(spec.paths().resolve(fabricModJson));
+		}
+		else
+		{
+			spec.gametestFabricModJson(spec.paths().gametestResource("fabric.mod.json"));
+		}
 	}
 
 	/**
@@ -266,12 +339,127 @@ public final class ToolchainProjectConfigLoader
 			validateModuleReferences(module, "dependency", module.dependencies(), moduleIds);
 			validateModuleReferences(module, "aggregate member", module.aggregateMembers(), moduleIds);
 			validateModuleReferences(module, "annotation processor", module.annotationProcessors(), moduleIds);
+			validateModuleReferences(module, "gametest dependency", module.gametestDependencies(), moduleIds);
 
 			if (module.aggregateMembers().contains(module.id()))
 			{
 				throw new IllegalArgumentException("Module '" + module.id() + "' cannot aggregate itself");
 			}
 		}
+
+		var modulesById = modules.stream().collect(Collectors.toMap(ModuleSpec::id, Function.identity()));
+
+		for (var module : modules)
+		{
+			validateGameTestModule(module, modulesById);
+		}
+	}
+
+	/**
+	 * Validates the GameTest declarations of one module against the loaded module graph.
+	 *
+	 * <p>GameTest source sets are test-only and must never share a root with shipped code, and a
+	 * GameTest dependency must itself declare GameTest source sets and already be a module dependency
+	 * so that its main code is part of every launch that uses it.
+	 *
+	 * @param module      the module to validate
+	 * @param modulesById the loaded modules by identifier
+	 */
+	private void validateGameTestModule(ModuleSpec module, Map<String, ModuleSpec> modulesById)
+	{
+		if (!SourceSetLayout.hasGameTests(module))
+		{
+			return;
+		}
+
+		validateGameTestRootsAreIsolated(module);
+
+		var transitiveDependencies = transitiveDependencyIds(module, modulesById);
+
+		for (var dependencyId : module.gametestDependencies())
+		{
+			if (dependencyId.equals(module.id()))
+			{
+				throw new IllegalArgumentException("Module '" + module.id() + "' cannot list itself in gametest_dependencies");
+			}
+
+			if (!SourceSetLayout.hasGameTests(modulesById.get(dependencyId)))
+			{
+				throw new IllegalArgumentException(
+						"Module '" + module.id() + "' lists gametest dependency '" + dependencyId + "', which declares no GameTest source sets"
+				);
+			}
+
+			if (!transitiveDependencies.contains(dependencyId))
+			{
+				throw new IllegalArgumentException(
+						"Module '" + module.id() + "' lists gametest dependency '" + dependencyId + "', which is not one of its module dependencies"
+				);
+			}
+		}
+	}
+
+	/**
+	 * Rejects GameTest roots that overlap a main or client root of the same module.
+	 *
+	 * @param module the module to validate
+	 */
+	private void validateGameTestRootsAreIsolated(ModuleSpec module)
+	{
+		List<Path> shippedRoots = new ArrayList<>();
+		shippedRoots.addAll(module.mainSources());
+		shippedRoots.addAll(module.mainResources());
+		shippedRoots.addAll(module.clientSources());
+		shippedRoots.addAll(module.clientResources());
+
+		List<Path> testRoots = new ArrayList<>();
+		testRoots.addAll(module.gametestSources());
+		testRoots.addAll(module.gametestResources());
+		testRoots.addAll(module.gametestClientSources());
+		testRoots.addAll(module.gametestClientResources());
+
+		for (var testRoot : testRoots)
+		{
+			var normalizedTestRoot = testRoot.normalize();
+
+			for (var shippedRoot : shippedRoots)
+			{
+				var normalizedShippedRoot = shippedRoot.normalize();
+
+				if (normalizedTestRoot.startsWith(normalizedShippedRoot) || normalizedShippedRoot.startsWith(normalizedTestRoot))
+				{
+					throw new IllegalArgumentException(
+							"Module '" + module.id() + "' GameTest root '" + testRoot + "' overlaps shipped root '" + shippedRoot + "'"
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Collects the transitive logical dependency identifiers of one module.
+	 *
+	 * @param module      the module whose dependencies to collect
+	 * @param modulesById the loaded modules by identifier
+	 *
+	 * @return the transitive dependency identifiers, excluding the module itself
+	 */
+	private Set<String> transitiveDependencyIds(ModuleSpec module, Map<String, ModuleSpec> modulesById)
+	{
+		Set<String> collected = new LinkedHashSet<>();
+		List<String> pending = new ArrayList<>(module.dependencies());
+
+		while (!pending.isEmpty())
+		{
+			var dependencyId = pending.removeLast();
+
+			if (collected.add(dependencyId))
+			{
+				pending.addAll(modulesById.get(dependencyId).dependencies());
+			}
+		}
+
+		return collected;
 	}
 
 	/**
