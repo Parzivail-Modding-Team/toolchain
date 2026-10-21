@@ -15,7 +15,9 @@ public final class SourceSetDependencyResolver
 	/**
 	 * Resolves which source set of a dependency should be visible to a consuming source set.
 	 *
-	 * <p>Client source sets must see client-only API from their dependencies, not just common code.
+	 * <p>Client source sets, including the client GameTest source set, must see client-only API from
+	 * their dependencies, not just common code. Every other consumer, including the common GameTest
+	 * source set, only sees common code so it cannot reference client classes by accident.
 	 *
 	 * @param graph                 the authoritative build graph
 	 * @param dependencyId          the dependency module identifier
@@ -29,16 +31,12 @@ public final class SourceSetDependencyResolver
 			String consumerSourceSetName
 	)
 	{
-		if (!SourceSetNames.CLIENT.equals(consumerSourceSetName))
+		if (!SourceSetNames.isClientEnvironment(consumerSourceSetName))
 		{
 			return SourceSetNames.MAIN;
 		}
 
-		var dependency = graph.modules()
-		                      .stream()
-		                      .filter(candidate -> dependencyId.equals(candidate.id()))
-		                      .findFirst()
-		                      .orElseThrow(() -> new IllegalArgumentException("Unknown module id: " + dependencyId));
+		var dependency = ModuleAggregationResolver.requireModule(graph, dependencyId);
 
 		return SourceSetLayout.hasClientSourceSet(dependency) ? SourceSetNames.CLIENT : SourceSetNames.MAIN;
 	}

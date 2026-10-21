@@ -12,9 +12,14 @@ import com.parzivail.toolchain.project.DevelopmentService;
 import com.parzivail.toolchain.project.RepositoryContext;
 import com.parzivail.toolchain.runtime.LaunchEnvironment;
 import com.parzivail.toolchain.runtime.LaunchIdentity;
+import com.parzivail.toolchain.test.GameTestRunRequest;
+import com.parzivail.toolchain.test.GameTestRunService;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Entrypoint for the standalone toolchain.
@@ -86,6 +91,7 @@ public final class Main
 			case "fabric" -> runFabricCommand(args);
 			case "idea" -> runIdeaCommand(args);
 			case "artifacts" -> runArtifactCommand(args);
+			case "test" -> runTestCommand(args);
 			default ->
 			{
 				printUsage();
@@ -129,6 +135,7 @@ public final class Main
 			System.out.println("Client working directory: " + clientLaunch.workingDirectory().toAbsolutePath());
 			System.out.println("Server working directory: " + serverLaunch.workingDirectory().toAbsolutePath());
 			System.out.println("Datagen configs: " + setup.datagenConfigurations().size());
+			System.out.println("GameTest configs: " + setup.gameTestLaunches().size());
 			System.out.println("Next step: reload IntelliJ if needed, then run the generated Fabric Client, Fabric Server, or Fabric Datagen configuration.");
 			return;
 		}
@@ -327,6 +334,60 @@ public final class Main
 	}
 
 	/**
+	 * Executes the headless GameTest command.
+	 *
+	 * <p>The process exits with {@code 0} only when every requested environment passed.
+	 *
+	 * @param args command line arguments
+	 *
+	 * @throws IOException if compilation, launch preparation or process management fails
+	 */
+	private static void runTestCommand(String[] args) throws IOException
+	{
+		List<LaunchEnvironment> environments = args.length < 2 ? List.of() : switch (args[1])
+		{
+			case "server" -> List.of(LaunchEnvironment.SERVER);
+			case "client" -> List.of(LaunchEnvironment.CLIENT);
+			case "all" -> List.of(LaunchEnvironment.SERVER, LaunchEnvironment.CLIENT);
+			default -> List.of();
+		};
+
+		if (environments.isEmpty())
+		{
+			printUsage();
+			System.exit(1);
+		}
+
+		var timeoutSeconds = flagValue(args, "--timeout");
+		var clientMods = flagValue(args, "--client-mod");
+		var serverTimeout = timeoutSeconds == null
+		                    ? GameTestRunRequest.DEFAULT_SERVER_TIMEOUT
+		                    : Duration.ofSeconds(Long.parseLong(timeoutSeconds));
+		var clientTimeout = timeoutSeconds == null
+		                    ? GameTestRunRequest.DEFAULT_CLIENT_TIMEOUT
+		                    : Duration.ofSeconds(Long.parseLong(timeoutSeconds));
+
+		var request = new GameTestRunRequest(
+				environments,
+				flagValue(args, "--module"),
+				flagValue(args, "--filter"),
+				clientMods == null ? List.of() : Arrays.stream(clientMods.split(",")).map(String::trim).filter(id -> !id.isEmpty()).toList(),
+				serverTimeout,
+				clientTimeout,
+				hasFlag(args, "--refresh"),
+				hasFlag(args, "--ide-output"),
+				hasFlag(args, "--accept-eula"),
+				flagValue(args, "--record-templates"),
+				!hasFlag(args, "--quiet")
+		);
+		var results = new GameTestRunService().run(request);
+		var allPassed = results.stream().allMatch(result -> result.passed());
+
+		System.out.println(allPassed ? "GameTests passed." : "GameTests did not pass.");
+		System.exit(allPassed ? 0 : 1);
+	}
+
+	/**
 	 * Executes artifact assembly commands.
 	 *
 	 * @param args command line arguments
@@ -486,6 +547,12 @@ public final class Main
 		System.out.println("    Generate module-scoped Fabric datagen run configurations.");
 		System.out.println("  fabric inspect-dev [--environment <client|server>]");
 		System.out.println("    Inspect the generated Fabric launch contract.");
+		System.out.println("  test <server|client|all> [--module <id>] [--filter <selector>] [--client-mod <ids>] [--timeout <seconds>]");
+		System.out.println("       [--refresh] [--ide-output] [--accept-eula] [--record-templates <module>] [--quiet]");
+		System.out.println("    Compile and run Fabric GameTests headlessly. --filter is a vanilla test selector for the server run, --client-mod");
+		System.out.println("    a comma-separated list of test-mod ids for the client run. --accept-eula writes eula=true into the GameTest game");
+		System.out.println("    directory and means you agree to the Minecraft EULA. --record-templates writes missing screenshot templates into");
+		System.out.println("    the named module's GameTest resources. --ide-output reuses IntelliJ's compiled outputs instead of compiling.");
 		System.out.println("  artifacts assemble [--module <id>] [--ci-build] [--refresh]");
 		System.out.println("    Assemble local project artifact jars from IntelliJ outputs, or compile into a toolchain-owned output tree first with --ci-build.");
 		System.out.println("  mojang manifest [--refresh]");

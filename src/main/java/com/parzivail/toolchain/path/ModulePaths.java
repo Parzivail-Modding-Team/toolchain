@@ -73,6 +73,49 @@ public final class ModulePaths
 	}
 
 	/**
+	 * Gets the common/server GameTest Java source root.
+	 *
+	 * @return the GameTest Java source root
+	 */
+	public Path gametestJava()
+	{
+		return resolve("src/gametest/java");
+	}
+
+	/**
+	 * Gets the common/server GameTest resource root.
+	 *
+	 * <p>This root also holds the test-only {@code fabric.mod.json}, test data packs and
+	 * authored GameTest structures.
+	 *
+	 * @return the GameTest resource root
+	 */
+	public Path gametestResources()
+	{
+		return resolve("src/gametest/resources");
+	}
+
+	/**
+	 * Gets the client GameTest Java source root.
+	 *
+	 * @return the client GameTest Java source root
+	 */
+	public Path gametestClientJava()
+	{
+		return resolve("src/gametest_client/java");
+	}
+
+	/**
+	 * Gets the client GameTest resource root.
+	 *
+	 * @return the client GameTest resource root
+	 */
+	public Path gametestClientResources()
+	{
+		return resolve("src/gametest_client/resources");
+	}
+
+	/**
 	 * Gets the standard main annotation processor output root.
 	 *
 	 * @return the generated source root
@@ -112,6 +155,18 @@ public final class ModulePaths
 	public Path mainResource(String fileName)
 	{
 		return mainResources().resolve(fileName);
+	}
+
+	/**
+	 * Resolves a file under the GameTest resources root.
+	 *
+	 * @param fileName the file name
+	 *
+	 * @return the resolved file path
+	 */
+	public Path gametestResource(String fileName)
+	{
+		return gametestResources().resolve(fileName);
 	}
 
 	/**

@@ -51,6 +51,12 @@
     </Appenders>
     <Loggers>
         <Logger level="${sys:fabric.log.level:-info}" name="net.minecraft"/>
+        <Logger level="${sys:fabric.log.debug.level:-debug}" name="pswg" additivity="false">
+            <AppenderRef ref="DebugFile" level="${sys:fabric.log.debug.level:-debug}"/>
+            <AppenderRef ref="SysOut" level="${sys:fabric.log.debug.level:-debug}"/>
+            <AppenderRef ref="LatestFile" level="${sys:fabric.log.debug.level:-debug}"/>
+            <AppenderRef ref="ServerGuiConsole" level="${sys:fabric.log.debug.level:-debug}"/>
+        </Logger>
         <Root level="${sys:fabric.log.debug.level:-debug}">
             <AppenderRef ref="DebugFile" level="${sys:fabric.log.debug.level:-debug}"/>
             <AppenderRef ref="SysOut" level="${sys:fabric.log.level:-info}"/>

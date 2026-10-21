@@ -113,6 +113,63 @@ Recommended update loop:
 5. verify one real IntelliJ debug launch for both environments before changing unrelated toolchain
    code
 
+## Updating GameTest Launches
+
+GameTest launches reuse the development launch generator. The same service prepares a vanilla baseline, the Fabric
+runtime and the module closure, and then differs in four places:
+
+- the instance directory: `work/instances/fabric-gametest-<environment>/<platform>/<version>`, with its own
+  `game/` and `results/` directories;
+- the classpath: the test-only outputs of every GameTest-enabled module in the closure and the GameTest Maven
+  dependencies of those modules, with the client-only ones only for a client launch;
+- the JVM properties that switch Fabric into its GameTest runners;
+- the IntelliJ names: launch module, libraries and run configuration are kind-scoped.
+
+Contract owners:
+
+- `toolchain/src/main/java/com/parzivail/toolchain/fabric/FabricDevLaunchService.java` owns the GameTest properties
+  (`fabric-api.gametest`, `fabric-api.gametest.report-file`, `fabric-api.gametest.filter`, `fabric.client.gametest`,
+  `fabric.client.gametest.modid`, `fabric.client.gametest.testModResourcesPath`) and
+  `toolchain.gametest.results-dir`.
+- `toolchain/src/main/java/com/parzivail/toolchain/test/GameTestRunService.java` owns the headless lifecycle: compile,
+  prepare, reset the instance, start the process through a Java `@argfile`, enforce the wall-clock budget, and
+  interpret the exit code and reports.
+- `toolchain/src/main/java/com/parzivail/toolchain/model/SourceSetLayout.java`,
+  `GameTestModuleResolver.java` and `config/ToolchainProjectConfigLoader.java` own the source-set model and its
+  validation.
+- `toolchain/src/main/java/com/parzivail/toolchain/artifact/GameTestArtifactAudit.java` owns the release guard.
+
+Sensitive areas:
+
+- Fabric's server runner exits with the number of failed required tests and `-1` when no test ran, and writes its
+  report only when it finishes. A missing report is an error, never a pass, and so is a report without cases.
+- Fabric's client runner has no report of its own and fails by rethrowing from the client loop, which ends the
+  process with a non-zero exit code.
+- The server runner bypasses the EULA check; the client runner does not when a test starts a dedicated server.
+- Before every run the runner deletes the instance's game and results directories. It refuses any directory that is
+  not strictly inside the instance root.
+
+Common failure signals:
+
+- `No compiled output found for <module>.gametest` usually means the run used IntelliJ outputs that were never
+  built; run without `--ide-output`.
+- `package net.fabricmc.fabric.api.gametest.v1 does not exist` means no `gametest_compile_dependencies` declare
+  Fabric's GameTest API, which is not part of the `fabric-api` bundle.
+- A server run that exits before writing `server-report.xml` usually failed during mod loading; read
+  `server-output.log` in the results directory.
+- A `Mod ... requires` error for a test mod means its `fabric.mod.json` depends on a mod that is not part of the
+  launch closure.
+
+Recommended update loop:
+
+1. compare Loom's `FabricApiTesting` and Fabric's `GameTestSystemProperties` / `TestSystemProperties` with the
+   constants in `FabricDevLaunchService`;
+2. run `./toolchain.sh test server` and `./toolchain.sh test client` against a project with at least one test of each
+   kind;
+3. run `./toolchain.sh dev setup-intellij` and compare the generated `Fabric_GameTest_*` run configurations with the
+   headless launch's `launch.json`;
+4. assemble artifacts and check that the audit still passes.
+
 ## Updating Datagen Workflow
 
 Datagen is intentionally simpler than Loom's general-purpose model:

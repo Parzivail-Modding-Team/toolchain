@@ -156,6 +156,43 @@ That keeps the runtime classpath broad enough for downstream generators to build
 modules, while still preventing the common "ran the wrong datagen config and wrote into the wrong
 module" failure mode.
 
+## GameTests
+
+A module can declare GameTest source sets, and the toolchain compiles, launches and reports them without any
+Gradle task. Minecraft's GameTest framework and Fabric's GameTest APIs stay the runtime; the toolchain only owns
+what surrounds a run.
+
+```bash
+./toolchain.sh test server   # headless Minecraft GameTest server, writes a JUnit XML report
+./toolchain.sh test client   # Fabric client GameTest runner, opens a Minecraft window briefly
+./toolchain.sh test all
+```
+
+`test` compiles the module closure and its GameTest source sets into the toolchain-owned CI output tree, prepares
+a GameTest launch, resets the isolated game directory, starts the game as a child process with a wall-clock
+timeout, and exits with `0` only when every requested environment passed. The timeout kills the OS process; no
+game thread is ever interrupted or stopped. Useful options are `--module`, `--filter` (a vanilla test selector for
+the server), `--client-mod` (test-mod ids for the client), `--timeout <seconds>`, `--ide-output`, `--quiet`,
+`--accept-eula` and `--record-templates <module>`.
+
+`dev setup-intellij` also generates `Fabric GameTest Server` and `Fabric GameTest Client` run configurations when
+the development module's closure declares GameTest source sets, so the same tests can be run and debugged from the
+IDE. Both use their own instance directory, `work/instances/fabric-gametest-<environment>/...`, and never touch a
+development instance's game directory, worlds or options.
+
+Each run writes its reports, the game's console output, failure snapshots and screenshots to the instance's
+`results/` directory. Test code finds it through the `toolchain.gametest.results-dir` system property. The server
+report is `server-report.xml`; a client test harness may write `client-report.xml` in the same JUnit shape, which
+the runner reads to report individual scenarios instead of only an exit code.
+
+GameTest source sets never end up in a release. They are separate source-set modules that artifact assembly does
+not read, and assembly fails when a packaged `fabric.mod.json` declares a `fabric-gametest` or
+`fabric-client-gametest` entrypoint or a packaged file collides with a GameTest output. The Minecraft EULA is never
+accepted implicitly: the server GameTest runner does not need it, and a client run that starts a dedicated server
+needs `--accept-eula` or an existing `eula=true`.
+
+See `PROJECT_SPEC.md` for the `toolchain.toml` fields.
+
 ## Version Upgrades
 
 Most routine version bumps start in the host project's `toolchain.toml`.
